@@ -170,7 +170,7 @@ async function handleApi(request, response, url) {
     const body = await readBody(request);
     const listingId = Number(body.listing_id);
     const rating = String(body.rating || "");
-    if (!listingId || !["good", "skip", "bought", "spam", "not_spam", "bad_pricer", "unmarked"].includes(rating)) {
+    if (!listingId || !["good", "skip", "bought", "spam", "not_spam", "bad_pricer", "bad_deal", "unmarked"].includes(rating)) {
       sendJson(response, 400, { error: "listing_id and valid rating are required" });
       return;
     }
@@ -259,7 +259,8 @@ function buildListings(state, query = "", options = {}) {
       const explicitLabel = labelsByListing.get(Number(listing.id));
       const prediction = predictPreference(listing, state.trainingModel);
       const classification = applyTrainingOverrides(classifyListing(listing, state.filters, state.sellers, state.config), explicitLabel, prediction, state.trainingModel);
-      const score = classification.is_filtered ? null : scoreDeal(listing, state.config);
+      const scoreInput = { ...listing, training: prediction };
+      const score = classification.is_filtered ? null : scoreDeal(scoreInput, state.config);
       if (score) score.training_preference = prediction.preference_score;
       return {
         ...listing,
@@ -318,6 +319,16 @@ function applyTrainingOverrides(classification, label, prediction, model) {
       is_filtered: true,
       spam_score: 100,
       reasons: [`User trained as ${rating.replace("_", " ")}`, ...classification.reasons]
+    };
+  }
+
+  if (rating === "bad_deal") {
+    return {
+      ...classification,
+      post_type: "BAD_DEAL",
+      is_filtered: false,
+      spam_score: 0,
+      reasons: ["User trained as bad deal", ...classification.reasons]
     };
   }
 

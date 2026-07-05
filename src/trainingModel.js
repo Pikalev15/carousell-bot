@@ -1,6 +1,6 @@
 const POSITIVE_LABELS = new Set(["good", "bought", "not_spam"]);
-const NEGATIVE_LABELS = new Set(["skip", "spam", "bad_pricer"]);
-const STRONG_NEGATIVE_LABELS = new Set(["spam", "bad_pricer"]);
+const NEGATIVE_LABELS = new Set(["skip", "spam", "bad_pricer", "bad_deal"]);
+const STRONG_NEGATIVE_LABELS = new Set(["spam", "bad_pricer", "bad_deal"]);
 const STOP_WORDS = new Set([
   "the",
   "and",
@@ -21,6 +21,9 @@ export function trainModel(listings, labels) {
   const listingById = new Map(listings.map((listing) => [Number(listing.id), listing]));
   const tokenStats = {};
   const sellerStats = {};
+  const dealStats = {
+    bad_deal_count: 0
+  };
   let positive = 0;
   let negative = 0;
 
@@ -34,6 +37,7 @@ export function trainModel(listings, labels) {
 
     if (polarity > 0) positive += 1;
     if (polarity < 0) negative += 1;
+    if (userRating === "bad_deal") dealStats.bad_deal_count += 1;
 
     for (const token of tokenizeListing(listing)) {
       tokenStats[token] ||= { good: 0, bad: 0 };
@@ -52,6 +56,7 @@ export function trainModel(listings, labels) {
     example_count: positive + negative,
     positive_count: positive,
     negative_count: negative,
+    bad_deal_count: dealStats.bad_deal_count,
     token_weights: calculateTokenWeights(tokenStats),
     seller_weights: calculateSellerWeights(sellerStats)
   };

@@ -28,6 +28,15 @@ body {
   background: var(--bg);
 }
 
+a {
+  color: var(--blue);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
 button,
 input,
 select {
@@ -397,6 +406,7 @@ select:focus {
 }
 
 .actions button[data-label="spam"],
+.actions button[data-label="bad_deal"],
 .actions button[data-block-seller] {
   color: var(--red);
 }

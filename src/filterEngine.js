@@ -65,19 +65,35 @@ export function classifyListing(listing, filters, sellerBlacklist, config) {
 
 export function scoreDeal(listing, config) {
   const median = config.categoryMedians[listing.category] || listing.current_price;
-  const priceScore = Math.max(0, Math.min(100, (1 - listing.current_price / (median * 1.15)) * 140));
+  const priceRatio = median ? listing.current_price / median : 1;
+  const priceScore = Math.max(0, Math.min(100, (1.35 - priceRatio) * 100));
   const sellerScore = Math.min(100, (listing.seller_rating || 0) * 20);
-  const ageScore = Math.min(100, (listing.days_listed || 0) * 2);
-  const score = Math.round(priceScore * 0.45 + (conditionScore[listing.condition] || 50) * 0.2 + sellerScore * 0.25 + ageScore * 0.1);
-  const estimatedNegotiationPrice = Math.round(listing.current_price * (listing.days_listed > 14 ? 0.88 : 0.92));
+  const ageHours = getListingAgeHours(listing);
+  const ageScore = Math.max(0, Math.min(100, 100 - ageHours * 1.2));
+  const preference = Number(listing.training?.preference_score ?? 50);
+  const preferenceScore = Math.max(0, Math.min(100, preference));
+  const badDealPenalty = preferenceScore < 35 ? (35 - preferenceScore) * 0.7 : 0;
+  const baseScore = priceScore * 0.42 + (conditionScore[listing.condition] || 50) * 0.18 + sellerScore * 0.12 + ageScore * 0.08 + preferenceScore * 0.2;
+  const score = Math.round(Math.max(0, Math.min(100, baseScore - badDealPenalty)));
+  const estimatedNegotiationPrice = Math.round(listing.current_price * (ageHours > 336 ? 0.88 : 0.92));
 
   return {
     deal_score: score,
     is_deal: score >= (config.dealThreshold || 70),
+    price_score: Math.round(priceScore),
+    seller_score: Math.round(sellerScore),
+    age_score: Math.round(ageScore),
+    preference_score: Math.round(preferenceScore),
     estimated_negotiation_price: estimatedNegotiationPrice,
     price_vs_median: Math.round(((listing.current_price - median) / median) * 100),
     trend_direction: listing.current_price < median * 0.98 ? "down" : listing.current_price > median * 1.02 ? "up" : "flat"
   };
+}
+
+function getListingAgeHours(listing) {
+  if (listing.listed_age_minutes !== null && listing.listed_age_minutes !== undefined) return Number(listing.listed_age_minutes) / 60;
+  if (listing.listed_at) return Math.max(0, (Date.now() - new Date(listing.listed_at).getTime()) / 3600000);
+  return Number(listing.days_listed || 0) * 24;
 }
 
 function getBadPricerReasons(listing, phraseMatches, config) {

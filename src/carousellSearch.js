@@ -180,6 +180,7 @@ function normalizeListing(input) {
     condition: normalizeCondition(input.condition || parsedCard.condition),
     seller_id: input.sellerId || `web-seller-${stableId(input.sellerName || parsedCard.sellerName || url)}`,
     seller_name: input.sellerName || parsedCard.sellerName || "Carousell seller",
+    seller_url: input.sellerUrl || "",
     seller_rating: 0,
     location: "Carousell SG",
     days_listed: listedAgeMinutes === null ? 0 : Math.max(0, Math.floor(listedAgeMinutes / 1440)),
@@ -220,11 +221,19 @@ async function enrichListingDetails(page, listings, limit) {
         const jsonLd = [...document.querySelectorAll('script[type="application/ld+json"]')]
           .map((script) => script.textContent || "")
           .join("\n");
-        return { bodyText, metaDescription, jsonLd };
+        const profileLinks = [...document.querySelectorAll('a[href^="/u/"], a[href*="/u/"]')].map((anchor) => ({
+          text: anchor.textContent?.trim() || "",
+          href: anchor.href || ""
+        }));
+        return { bodyText, metaDescription, jsonLd, profileLinks };
       });
+      const seller = extractSellerFromDetails(details, parsed.sellerName);
       enriched.push({
         ...listing,
         ...parsed,
+        sellerName: seller.name || parsed.sellerName,
+        sellerId: seller.id || listing.sellerId,
+        sellerUrl: seller.url,
         description: extractDescription(details.bodyText, details.metaDescription, parsed.title),
         price: extractRealPriceFromDescription(`${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`) || listing.price
       });
@@ -234,6 +243,40 @@ async function enrichListingDetails(page, listings, limit) {
   }
 
   return enriched;
+}
+
+function extractSellerFromDetails(details, fallbackName = "") {
+  const links = details.profileLinks || [];
+  const candidate = links.find((link) => {
+    const name = cleanSellerName(link.text);
+    return name && !/carousell|help|support|login|signup/i.test(name);
+  });
+  if (candidate) {
+    const name = cleanSellerName(candidate.text);
+    return {
+      name,
+      id: name ? `carousell-${stableId(name)}` : "",
+      url: candidate.href || ""
+    };
+  }
+
+  const text = `${details.jsonLd || ""}\n${details.bodyText || ""}`;
+  const usernameMatch = text.match(/"username"\s*:\s*"([^"]+)"/i) || text.match(/"name"\s*:\s*"([^"]+)"/i);
+  const name = cleanSellerName(usernameMatch?.[1] || fallbackName);
+  return {
+    name,
+    id: name ? `carousell-${stableId(name)}` : "",
+    url: ""
+  };
+}
+
+function cleanSellerName(value) {
+  return (
+    String(value || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line && !/^\d/.test(line) && !/followers?|following|reviews?|verified/i.test(line)) || ""
+  );
 }
 
 export function parseCardText(cardText) {

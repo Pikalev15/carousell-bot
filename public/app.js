@@ -295,7 +295,7 @@ function renderTraining() {
   document.getElementById("training-stats").innerHTML = `
     <div><span class="meta">Examples</span><strong>${model.example_count || 0}</strong></div>
     <div><span class="meta">Good</span><strong>${model.positive_count || 0}</strong></div>
-    <div><span class="meta">Skip/spam</span><strong>${model.negative_count || 0}</strong></div>
+    <div><span class="meta">Bad deal</span><strong>${model.bad_deal_count || 0}</strong></div>
     <div><span class="meta">Updated</span><strong>${model.trained_at ? new Date(model.trained_at).toLocaleTimeString() : "Never"}</strong></div>
   `;
 }
@@ -307,7 +307,7 @@ function card(listing) {
     ? `<span class="badge bad">${classification.post_type}</span>`
     : `<span class="badge good">Score ${listing.score.deal_score}</span>`;
   const score = listing.score
-    ? `<p class="meta">Est. negotiate: ${formatMoney(listing.score.estimated_negotiation_price)} | preference: ${listing.score.training_preference}/100 | trend: ${listing.score.trend_direction}</p>`
+    ? `<p class="meta">Deal ${listing.score.deal_score}/100 | price ${listing.score.price_score}/100 | preference ${listing.score.training_preference}/100</p>`
     : "";
   const reasons = classification.reasons.length
     ? `<ul class="reasons">${classification.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`
@@ -319,7 +319,7 @@ function card(listing) {
       <div class="card-header">
         <div>
           <p class="title">${escapeHtml(listing.title)}</p>
-          <p class="meta">${escapeHtml(listing.seller_name)} | ${listing.seller_rating} stars | ${formatAge(listing)} | ${escapeHtml(listing.location)}</p>
+          <p class="meta">${sellerMarkup(listing)} | ${listing.seller_rating} stars | ${formatAge(listing)} | ${escapeHtml(listing.location)}</p>
         </div>
         <div class="badge-stack">${badge}${labelBadge}</div>
       </div>
@@ -333,6 +333,7 @@ function card(listing) {
         <button data-open-url="${escapeHtml(listing.carousell_url)}">Open</button>
         <button data-label="good" data-listing-id="${listing.id}" data-price="${listing.current_price}">Good</button>
         <button data-label="skip" data-listing-id="${listing.id}" data-price="${listing.current_price}">Skip</button>
+        <button data-label="bad_deal" data-listing-id="${listing.id}" data-price="${listing.current_price}">Bad deal</button>
         <button data-label="bought" data-listing-id="${listing.id}" data-price="${listing.current_price}">Bought</button>
         <button data-label="spam" data-listing-id="${listing.id}" data-price="${listing.current_price}">Spam</button>
         <button data-label="not_spam" data-listing-id="${listing.id}" data-price="${listing.current_price}">Not spam</button>
@@ -348,7 +349,7 @@ function openDetails(listing) {
   document.getElementById("details-body").innerHTML = `
     <div class="detail-grid">
       <p><strong>Price</strong><span>${formatMoney(listing.current_price)}</span></p>
-      <p><strong>Seller</strong><span>${escapeHtml(listing.seller_name)} (${listing.seller_rating} stars)</span></p>
+      <p><strong>Seller</strong><span>${sellerMarkup(listing)} (${listing.seller_rating} stars)</span></p>
       <p><strong>Condition</strong><span>${escapeHtml(listing.condition)}</span></p>
       <p><strong>Classification</strong><span>${escapeHtml(listing.classification.post_type)}</span></p>
       <p><strong>Description</strong><span>${escapeHtml(listing.description || "")}</span></p>
@@ -387,6 +388,11 @@ function getNumberValue(id, fallback) {
 
 function formatMoney(value) {
   return `$${Number(value || 0).toLocaleString()}`;
+}
+
+function sellerMarkup(listing) {
+  const name = escapeHtml(listing.seller_name || "Carousell seller");
+  return listing.seller_url ? `<a href="${escapeHtml(listing.seller_url)}" target="_blank" rel="noopener">${name}</a>` : name;
 }
 
 function formatAge(listing) {

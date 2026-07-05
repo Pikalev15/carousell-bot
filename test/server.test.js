@@ -32,6 +32,11 @@ test("serves health and listings endpoints", async () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ listing_id: 4, rating: "spam", asked_price: 999 })
     }).then((response) => response.json());
+    const badDealLabel = await fetch(`http://localhost:${port}/api/feedback/label`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ listing_id: 2, rating: "bad_deal", asked_price: 980 })
+    }).then((response) => response.json());
     const model = await fetch(`http://localhost:${port}/api/training/model`).then((response) => response.json());
 
     assert.equal(health.ok, true);
@@ -45,7 +50,9 @@ test("serves health and listings endpoints", async () => {
     assert.equal(Array.isArray(search.results), true);
     assert.equal(label.user_rating, "good");
     assert.equal(spamLabel.user_rating, "spam");
-    assert.ok(model.example_count >= 2);
+    assert.equal(badDealLabel.user_rating, "bad_deal");
+    assert.ok(model.example_count >= 3);
+    assert.ok(model.bad_deal_count >= 1);
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
