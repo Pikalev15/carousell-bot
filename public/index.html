@@ -15,6 +15,7 @@
         </div>
         <nav>
           <button class="nav-button active" data-view="dashboard">Dashboard</button>
+          <button class="nav-button" data-view="search">Search</button>
           <button class="nav-button" data-view="listings">Listings</button>
           <button class="nav-button" data-view="settings">Filters</button>
         </nav>
@@ -34,6 +35,24 @@
             <h3>Live Deals</h3>
             <div id="deals" class="grid"></div>
           </div>
+        </section>
+
+        <section id="search" class="view">
+          <div class="toolbar">
+            <div>
+              <p class="eyebrow">Local scraper test</p>
+              <h2>Search</h2>
+            </div>
+          </div>
+          <form id="search-form" class="search-row">
+            <input id="search-input" name="query" placeholder="Search MacBook, AirPods, camera..." required>
+            <button>Search</button>
+            <button type="button" id="search-more">Search more</button>
+          </form>
+          <div id="search-summary" class="notice"></div>
+          <div id="search-results" class="grid"></div>
+          <h3>Recent Searches</h3>
+          <div id="search-history" class="table"></div>
         </section>
 
         <section id="listings" class="view">
@@ -74,6 +93,13 @@
         </section>
       </main>
     </div>
+    <dialog id="details-modal">
+      <div class="modal-header">
+        <h3 id="details-title">Listing</h3>
+        <button id="details-close">Close</button>
+      </div>
+      <div id="details-body"></div>
+    </dialog>
     <script src="/app.js"></script>
   </body>
 </html>

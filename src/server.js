@@ -40,29 +40,56 @@ async function handleApi(request, response, url) {
 
   if (request.method === "GET" && url.pathname === "/api/listings") {
     const state = await getState();
-    const listings = state.listings.map((listing) => {
-      const classification = classifyListing(listing, state.filters, state.sellers, state.config);
-      return {
-        ...listing,
-        classification,
-        score: classification.is_filtered ? null : scoreDeal(listing, state.config)
-      };
-    });
+    const listings = buildListings(state, url.searchParams.get("q"));
     sendJson(response, 200, listings);
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname.startsWith("/api/listings/")) {
+    const id = Number(url.pathname.split("/").pop());
+    const state = await getState();
+    const listing = buildListings(state).find((item) => item.id === id);
+    if (!listing) {
+      sendJson(response, 404, { error: "Listing not found" });
+      return;
+    }
+    sendJson(response, 200, listing);
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/api/deals") {
     const state = await getState();
-    const deals = state.listings
-      .map((listing) => ({
-        ...listing,
-        classification: classifyListing(listing, state.filters, state.sellers, state.config)
-      }))
+    const deals = buildListings(state)
       .filter((listing) => !listing.classification.is_filtered)
-      .map((listing) => ({ ...listing, score: scoreDeal(listing, state.config) }))
       .filter((listing) => listing.score.is_deal);
     sendJson(response, 200, deals);
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/search") {
+    const body = await readBody(request);
+    const query = String(body.query || "").trim();
+    const mode = body.mode === "more" ? "more" : "normal";
+    if (!query) {
+      sendJson(response, 400, { error: "query is required" });
+      return;
+    }
+
+    await recordSearch(query, mode);
+    if (mode === "more") await addDemoSearchResults(query);
+
+    const state = await getState();
+    sendJson(response, 200, {
+      query,
+      mode,
+      results: buildListings(state, query),
+      history: await readJson("searches")
+    });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/search/history") {
+    sendJson(response, 200, await readJson("searches"));
     return;
   }
 
@@ -122,6 +149,47 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "POST" && url.pathname === "/api/feedback/label") {
+    const body = await readBody(request);
+    const listingId = Number(body.listing_id);
+    const rating = String(body.rating || "");
+    if (!listingId || !["good", "skip", "bought", "unmarked"].includes(rating)) {
+      sendJson(response, 400, { error: "listing_id and valid rating are required" });
+      return;
+    }
+    const labels = await readJson("labels");
+    const next = labels.filter((label) => label.listing_id !== listingId);
+    next.push({
+      listing_id: listingId,
+      user_rating: rating,
+      asked_price: body.asked_price || null,
+      negotiated_price: body.negotiated_price || null,
+      timestamp: new Date().toISOString()
+    });
+    await writeJson("labels", next);
+    sendJson(response, 200, next.find((label) => label.listing_id === listingId));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/feedback/labels") {
+    sendJson(response, 200, await readJson("labels"));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/msrp/lookup") {
+    const body = await readBody(request);
+    const title = String(body.title || "listing");
+    const price = Number(body.price || 0);
+    const estimate = Math.max(price + 20, Math.round(price * deterministicMultiplier(title)));
+    sendJson(response, 200, {
+      title,
+      msrp: estimate,
+      discount_percent: estimate ? Math.round(((estimate - price) / estimate) * 100) : 0,
+      source: "Local test estimator"
+    });
+    return;
+  }
+
   if (request.method === "DELETE" && url.pathname.startsWith("/api/sellers/blacklist/")) {
     const sellerId = decodeURIComponent(url.pathname.split("/").pop());
     const sellers = await readJson("sellers");
@@ -146,6 +214,97 @@ async function handleApi(request, response, url) {
   }
 
   sendJson(response, 404, { error: "Not found" });
+}
+
+function buildListings(state, query = "") {
+  const needle = String(query || "").trim().toLowerCase();
+  return state.listings
+    .filter((listing) => {
+      if (!needle) return true;
+      return `${listing.title} ${listing.description} ${listing.category}`.toLowerCase().includes(needle);
+    })
+    .map((listing) => {
+      const classification = classifyListing(listing, state.filters, state.sellers, state.config);
+      return {
+        ...listing,
+        classification,
+        score: classification.is_filtered ? null : scoreDeal(listing, state.config)
+      };
+    });
+}
+
+async function recordSearch(query, mode) {
+  const searches = await readJson("searches");
+  searches.unshift({
+    id: Date.now(),
+    query,
+    mode,
+    timestamp: new Date().toISOString()
+  });
+  await writeJson("searches", searches.slice(0, 50));
+}
+
+async function addDemoSearchResults(query) {
+  const listings = await readJson("listings");
+  const existingForQuery = listings.filter((listing) => listing.carousell_id.startsWith(`demo-${slug(query)}-`)).length;
+  const additions = makeDemoListings(query, listings.length + 1, existingForQuery);
+  listings.push(...additions);
+  await writeJson("listings", listings);
+}
+
+function makeDemoListings(query, startId, offset) {
+  const cleanQuery = titleCase(query);
+  const category = inferCategory(query);
+  const sellers = ["Nate", "Clara", "Wei", "Rina", "Harish", "Jo"];
+  const conditions = ["like_new", "good", "fair", "new"];
+  return Array.from({ length: 6 }, (_, index) => {
+    const n = offset + index + 1;
+    const bait = n % 5 === 0;
+    const hostile = n % 4 === 0;
+    const price = bait ? 1 : Math.max(45, Math.round((520 + n * 73) * (category === "camera" ? 1.8 : 1)));
+    return {
+      id: startId + index,
+      carousell_id: `demo-${slug(query)}-${Date.now()}-${index}`,
+      title: `${cleanQuery} ${n % 2 ? "bundle" : "set"} ${n}`,
+      description: bait ? "Offer me, testing water." : hostile ? "No lowball. Price firm." : "Personal sale, meet-up preferred.",
+      category,
+      condition: conditions[n % conditions.length],
+      seller_id: `demo-seller-${slug(query)}-${n}`,
+      seller_name: sellers[n % sellers.length],
+      seller_rating: Number((3.7 + (n % 14) / 10).toFixed(1)),
+      location: ["Bishan", "Tampines", "Jurong", "Orchard", "Serangoon"][n % 5],
+      days_listed: (n * 3) % 45,
+      current_price: price,
+      image_urls: [],
+      carousell_url: "https://www.carousell.sg/",
+      scraped_at: new Date().toISOString()
+    };
+  });
+}
+
+function deterministicMultiplier(value) {
+  const sum = [...value].reduce((total, char) => total + char.charCodeAt(0), 0);
+  return 1.18 + (sum % 45) / 100;
+}
+
+function inferCategory(query) {
+  const text = query.toLowerCase();
+  if (/camera|sony|canon|nikon|fuji|lens/.test(text)) return "camera";
+  if (/switch|playstation|xbox|game|ps5/.test(text)) return "gaming";
+  if (/airpod|speaker|headphone|audio/.test(text)) return "audio";
+  return "electronics";
+}
+
+function slug(value) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "search";
+}
+
+function titleCase(value) {
+  return value
+    .trim()
+    .split(/\s+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
 }
 
 async function serveStatic(urlPath, response) {
