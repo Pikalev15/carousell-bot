@@ -46,7 +46,9 @@
           </div>
           <form id="search-form" class="search-row">
             <input id="search-input" name="query" placeholder="Search MacBook, AirPods, camera..." required>
-            <button>Search web</button>
+            <input id="search-min-price" name="min_price" type="number" min="0" step="1" value="1" aria-label="Minimum price">
+            <input id="search-max-price" name="max_price" type="number" min="0" step="1" placeholder="Max $" aria-label="Maximum price">
+            <button type="submit">Search web</button>
             <button type="button" id="search-more">Search more</button>
           </form>
           <div id="search-summary" class="notice"></div>
@@ -62,10 +64,15 @@
               <h2>Listings</h2>
             </div>
             <select id="listing-filter">
-              <option value="all">All</option>
-              <option value="clean">Clean WTS</option>
+              <option value="clean" selected>Clean WTS</option>
+              <option value="all">All visible</option>
               <option value="filtered">Filtered</option>
             </select>
+          </div>
+          <div class="filter-bar">
+            <label>Min <input id="listing-min-price" type="number" min="0" step="1" value="1"></label>
+            <label>Max <input id="listing-max-price" type="number" min="0" step="1" placeholder="Any"></label>
+            <button id="clear-price-filters">Clear</button>
           </div>
           <div id="listing-list" class="grid"></div>
         </section>

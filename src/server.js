@@ -41,7 +41,11 @@ async function handleApi(request, response, url) {
 
   if (request.method === "GET" && url.pathname === "/api/listings") {
     const state = await getState();
-    const listings = buildListings(state, url.searchParams.get("q"));
+    const listings = buildListings(state, url.searchParams.get("q"), {
+      minPrice: url.searchParams.get("min_price"),
+      maxPrice: url.searchParams.get("max_price"),
+      includeFiltered: url.searchParams.get("include_filtered") === "true"
+    });
     sendJson(response, 200, listings);
     return;
   }
@@ -88,7 +92,11 @@ async function handleApi(request, response, url) {
       source_url: webSearch?.url || null,
       added: webSearch?.added || 0,
       warning: webSearch?.warning || null,
-      results: buildListings(state, query),
+      results: buildListings(state, query, {
+        minPrice: body.min_price ?? 1,
+        maxPrice: body.max_price,
+        includeFiltered: Boolean(body.include_filtered)
+      }),
       history: await readJson("searches")
     });
     return;
@@ -222,8 +230,10 @@ async function handleApi(request, response, url) {
   sendJson(response, 404, { error: "Not found" });
 }
 
-function buildListings(state, query = "") {
+function buildListings(state, query = "", options = {}) {
   const needle = String(query || "").trim().toLowerCase();
+  const minPrice = options.minPrice === null || options.minPrice === undefined || options.minPrice === "" ? null : Number(options.minPrice);
+  const maxPrice = options.maxPrice === null || options.maxPrice === undefined || options.maxPrice === "" ? null : Number(options.maxPrice);
   return state.listings
     .filter((listing) => {
       if (!needle) return true;
@@ -236,6 +246,12 @@ function buildListings(state, query = "") {
         classification,
         score: classification.is_filtered ? null : scoreDeal(listing, state.config)
       };
+    })
+    .filter((listing) => {
+      if (!options.includeFiltered && listing.classification.is_filtered) return false;
+      if (minPrice !== null && Number(listing.current_price || 0) < minPrice) return false;
+      if (maxPrice !== null && Number(listing.current_price || 0) > maxPrice) return false;
+      return true;
     });
 }
 

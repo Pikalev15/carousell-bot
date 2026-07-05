@@ -35,6 +35,13 @@ document.querySelectorAll(".nav-button").forEach((button) => {
 
 document.getElementById("refresh").addEventListener("click", load);
 document.getElementById("listing-filter").addEventListener("change", renderListings);
+document.getElementById("listing-min-price").addEventListener("input", renderListings);
+document.getElementById("listing-max-price").addEventListener("input", renderListings);
+document.getElementById("clear-price-filters").addEventListener("click", () => {
+  document.getElementById("listing-min-price").value = "1";
+  document.getElementById("listing-max-price").value = "";
+  renderListings();
+});
 document.getElementById("details-close").addEventListener("click", () => document.getElementById("details-modal").close());
 
 document.getElementById("filter-form").addEventListener("submit", async (event) => {
@@ -49,6 +56,8 @@ document.getElementById("search-form").addEventListener("submit", async (event) 
   event.preventDefault();
   await runSearch("web");
 });
+document.getElementById("search-min-price").addEventListener("input", renderSearch);
+document.getElementById("search-max-price").addEventListener("input", renderSearch);
 
 document.getElementById("search-more").addEventListener("click", async () => {
   await runSearch("more");
@@ -57,7 +66,7 @@ document.getElementById("search-more").addEventListener("click", async () => {
 async function load() {
   try {
     const [listings, deals, filters, sellers, stats, labels, searches] = await Promise.all([
-      api.get("/api/listings"),
+      api.get("/api/listings?include_filtered=true"),
       api.get("/api/deals"),
       api.get("/api/filters/blacklist"),
       api.get("/api/sellers/blacklist"),
@@ -67,7 +76,7 @@ async function load() {
     ]);
     Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches });
     if (state.lastQuery) {
-      state.searchResults = state.listings.filter((listing) => matchesQuery(listing, state.lastQuery));
+      state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, state.lastQuery) && !listing.classification.is_filtered), "search");
     }
     renderAll();
   } catch (error) {
@@ -91,7 +100,13 @@ async function runSearch(mode) {
   if (!query) return;
   document.getElementById("search-summary").textContent = mode === "more" ? "Searching Carousell for more results..." : "Searching Carousell...";
   try {
-    const payload = await api.post("/api/search", { query, mode });
+    const payload = await api.post("/api/search", {
+      query,
+      mode,
+      min_price: getNumberValue("search-min-price", 1),
+      max_price: getNumberValue("search-max-price", null),
+      include_filtered: false
+    });
     state.lastQuery = query;
     state.searchResults = payload.results;
     state.searches = payload.history;
@@ -101,7 +116,7 @@ async function runSearch(mode) {
     const source = payload.source === "carousell-web" ? "Carousell web" : payload.source;
     const added = payload.added ? ` Added ${payload.added} new listings.` : "";
     const warning = payload.warning ? ` ${payload.warning}` : "";
-    document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} results for "${query}" via ${source}.${added}${warning}`;
+    document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} clean results for "${query}" via ${source}.${added}${warning}`;
   } catch (error) {
     document.getElementById("search-summary").textContent = `Search failed: ${error.message}`;
   }
@@ -133,7 +148,7 @@ function renderDeals() {
 
 function renderListings() {
   const filter = document.getElementById("listing-filter").value;
-  const listings = state.listings.filter((listing) => {
+  const listings = applyPriceFilters(state.listings, "listing").filter((listing) => {
     if (filter === "clean") return !listing.classification.is_filtered;
     if (filter === "filtered") return listing.classification.is_filtered;
     return true;
@@ -142,9 +157,10 @@ function renderListings() {
 }
 
 function renderSearch() {
-  document.getElementById("search-results").innerHTML = state.searchResults.length
-    ? state.searchResults.map(card).join("")
-    : `<p class="meta">Run a web search to pull matching Carousell listings. Search more tries a larger pull and falls back to demo rows only if web search fails.</p>`;
+  const results = applyPriceFilters(state.searchResults.filter((listing) => !listing.classification.is_filtered), "search");
+  document.getElementById("search-results").innerHTML = results.length
+    ? results.map(card).join("")
+    : `<p class="empty-state">No clean listings in this price range. Try raising the max, lowering the min, or searching a more specific phrase.</p>`;
   document.getElementById("search-history").innerHTML = state.searches.length
     ? state.searches
         .slice(0, 8)
@@ -313,6 +329,26 @@ function openDetails(listing) {
 function matchesQuery(listing, query) {
   const text = `${listing.title} ${listing.description} ${listing.category}`.toLowerCase();
   return text.includes(query.toLowerCase());
+}
+
+function applyPriceFilters(listings, scope) {
+  const minId = scope === "search" ? "search-min-price" : "listing-min-price";
+  const maxId = scope === "search" ? "search-max-price" : "listing-max-price";
+  const min = getNumberValue(minId, 1);
+  const max = getNumberValue(maxId, null);
+  return listings.filter((listing) => {
+    const price = Number(listing.current_price || 0);
+    if (min !== null && price < min) return false;
+    if (max !== null && price > max) return false;
+    return true;
+  });
+}
+
+function getNumberValue(id, fallback) {
+  const raw = document.getElementById(id).value;
+  if (raw === "") return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
 }
 
 function formatMoney(value) {
