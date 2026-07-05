@@ -352,7 +352,7 @@ function openDetails(listing) {
       <p><strong>Seller</strong><span>${sellerMarkup(listing)} (${listing.seller_rating} stars)</span></p>
       <p><strong>Condition</strong><span>${escapeHtml(listing.condition)}</span></p>
       <p><strong>Classification</strong><span>${escapeHtml(listing.classification.post_type)}</span></p>
-      <p><strong>Description</strong><span>${escapeHtml(listing.description || "")}</span></p>
+      <p class="description-row"><strong>Description</strong><span>${escapeHtml(listing.description || "No description captured yet. Search this listing again to refresh details.")}</span></p>
     </div>
   `;
   document.getElementById("details-modal").showModal();

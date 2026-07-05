@@ -317,9 +317,6 @@ function parseListedAgeMinutes(value) {
 }
 
 function extractDescription(bodyText, metaDescription, title) {
-  const meta = String(metaDescription || "").trim();
-  if (meta && !meta.toLowerCase().includes("carousell")) return cleanDescriptionText(meta, title);
-
   const lines = String(bodyText || "")
     .split(/\n+/)
     .map((line) => line.trim())
@@ -330,9 +327,12 @@ function extractDescription(bodyText, metaDescription, title) {
   const descriptionLines = (stopIndex >= 0 ? afterTitle.slice(0, stopIndex) : afterTitle)
     .filter((line) => !/^(S\$|\$|SGD)\s?[\d,]+/i.test(line))
     .filter((line) => !/^(brand new|like new|lightly used|well used|heavily used|new)$/i.test(line))
-    .filter((line) => !/^\d+ (minute|min|hour|day|week|month|year)s? ago$/i.test(line))
-    .slice(0, 12);
-  return cleanDescriptionText(descriptionLines.join("\n"), title).slice(0, 1200);
+    .filter((line) => !/^\d+ (minute|min|hour|day|week|month|year)s? ago$/i.test(line));
+  const fullDescription = cleanDescriptionText(descriptionLines.join("\n"), title);
+  if (fullDescription) return fullDescription;
+
+  const meta = String(metaDescription || "").trim();
+  return meta && !meta.toLowerCase().includes("carousell") ? cleanDescriptionText(meta, title) : "";
 }
 
 export function extractRealPriceFromDescription(description) {

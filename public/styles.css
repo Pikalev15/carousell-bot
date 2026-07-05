@@ -436,7 +436,7 @@ select:focus {
 }
 
 dialog {
-  width: min(620px, calc(100vw - 28px));
+  width: min(780px, calc(100vw - 28px));
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 0;
@@ -475,6 +475,15 @@ dialog::backdrop {
 
 .detail-grid span {
   color: var(--muted);
+}
+
+.detail-grid .description-row {
+  grid-template-columns: 1fr;
+}
+
+.detail-grid .description-row span {
+  white-space: pre-wrap;
+  line-height: 1.55;
 }
 
 .empty-state {
