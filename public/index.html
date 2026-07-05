@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Carousell Bot</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div>
+          <p class="eyebrow">Local PC test</p>
+          <h1>Carousell Bot</h1>
+        </div>
+        <nav>
+          <button class="nav-button active" data-view="dashboard">Dashboard</button>
+          <button class="nav-button" data-view="listings">Listings</button>
+          <button class="nav-button" data-view="settings">Filters</button>
+        </nav>
+      </aside>
+
+      <main>
+        <section id="dashboard" class="view active">
+          <div class="toolbar">
+            <div>
+              <p class="eyebrow">Deal detection</p>
+              <h2>Today</h2>
+            </div>
+            <button id="refresh">Refresh</button>
+          </div>
+          <div id="stats" class="stats"></div>
+          <div>
+            <h3>Live Deals</h3>
+            <div id="deals" class="grid"></div>
+          </div>
+        </section>
+
+        <section id="listings" class="view">
+          <div class="toolbar">
+            <div>
+              <p class="eyebrow">Classified posts</p>
+              <h2>Listings</h2>
+            </div>
+            <select id="listing-filter">
+              <option value="all">All</option>
+              <option value="clean">Clean WTS</option>
+              <option value="filtered">Filtered</option>
+            </select>
+          </div>
+          <div id="listing-list" class="grid"></div>
+        </section>
+
+        <section id="settings" class="view">
+          <div class="toolbar">
+            <div>
+              <p class="eyebrow">Blacklist control</p>
+              <h2>Filters</h2>
+            </div>
+          </div>
+          <form id="filter-form" class="form-row">
+            <input name="phrase" placeholder="Phrase to block" required>
+            <select name="type">
+              <option value="blacklist">Word blacklist</option>
+              <option value="spam_keyword">Spam keyword</option>
+              <option value="bad_pricer">Stupid pricer</option>
+            </select>
+            <input name="reason" placeholder="Reason">
+            <button>Add</button>
+          </form>
+          <div id="filters" class="table"></div>
+          <h3>Blocked Sellers</h3>
+          <div id="sellers" class="table"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>

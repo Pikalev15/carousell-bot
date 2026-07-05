@@ -1,0 +1,16 @@
+[
+  { "id": 1, "type": "blacklist", "phrase": "WTB", "reason": "Bait post" },
+  { "id": 2, "type": "blacklist", "phrase": "want to buy", "reason": "Not a selling post" },
+  { "id": 3, "type": "blacklist", "phrase": "looking to buy", "reason": "Not a selling post" },
+  { "id": 4, "type": "blacklist", "phrase": "looking for", "reason": "Not a selling post" },
+  { "id": 5, "type": "spam_keyword", "phrase": "fast cash", "reason": "Scam indicator" },
+  { "id": 6, "type": "spam_keyword", "phrase": "trading bot", "reason": "Scam indicator" },
+  { "id": 7, "type": "spam_keyword", "phrase": "forex", "reason": "Scam indicator" },
+  { "id": 8, "type": "blacklist", "phrase": "dropship", "reason": "Business listing" },
+  { "id": 9, "type": "blacklist", "phrase": "reseller", "reason": "Business listing" },
+  { "id": 10, "type": "bad_pricer", "phrase": "offer me", "reason": "No real asking price" },
+  { "id": 11, "type": "bad_pricer", "phrase": "PM offer", "reason": "No real asking price" },
+  { "id": 12, "type": "bad_pricer", "phrase": "testing water", "reason": "Likely price fishing" },
+  { "id": 13, "type": "bad_pricer", "phrase": "no lowball", "reason": "Hostile pricing tactic" },
+  { "id": 14, "type": "bad_pricer", "phrase": "lowball ignored", "reason": "Hostile pricing tactic" }
+]
