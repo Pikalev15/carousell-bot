@@ -6,6 +6,7 @@ import { server } from "../src/server.js";
 test("serves health and listings endpoints", async () => {
   const labelsSnapshot = await readFile("data/labels.json", "utf8");
   const searchesSnapshot = await readFile("data/search-history.json", "utf8");
+  const modelSnapshot = await readFile("data/training-model.json", "utf8");
   await new Promise((resolve) => server.listen(0, resolve));
   const { port } = server.address();
 
@@ -25,6 +26,12 @@ test("serves health and listings endpoints", async () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ listing_id: 1, rating: "good", asked_price: 1180 })
     }).then((response) => response.json());
+    const spamLabel = await fetch(`http://localhost:${port}/api/feedback/label`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ listing_id: 4, rating: "spam", asked_price: 999 })
+    }).then((response) => response.json());
+    const model = await fetch(`http://localhost:${port}/api/training/model`).then((response) => response.json());
 
     assert.equal(health.ok, true);
     assert.equal(Array.isArray(listings), true, JSON.stringify(listings));
@@ -35,10 +42,13 @@ test("serves health and listings endpoints", async () => {
     assert.equal(search.query, "MacBook");
     assert.equal(Array.isArray(search.results), true);
     assert.equal(label.user_rating, "good");
+    assert.equal(spamLabel.user_rating, "spam");
+    assert.ok(model.example_count >= 2);
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     await writeFile("data/labels.json", labelsSnapshot, "utf8");
     await writeFile("data/search-history.json", searchesSnapshot, "utf8");
+    await writeFile("data/training-model.json", modelSnapshot, "utf8");
   }
 });

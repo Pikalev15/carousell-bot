@@ -11,7 +11,8 @@ const paths = {
   sellers: path.join(root, "data", "seller-blacklist.json"),
   config: path.join(root, "data", "config.json"),
   labels: path.join(root, "data", "labels.json"),
-  searches: path.join(root, "data", "search-history.json")
+  searches: path.join(root, "data", "search-history.json"),
+  trainingModel: path.join(root, "data", "training-model.json")
 };
 
 export async function readJson(name) {
@@ -23,11 +24,13 @@ export async function writeJson(name, value) {
 }
 
 export async function getState() {
-  const [listings, filters, sellers, config] = await Promise.all([
+  const [listings, filters, sellers, config, labels, trainingModel] = await Promise.all([
     readJson("listings"),
     readJson("filters"),
     readJson("sellers"),
-    readJson("config")
+    readJson("config"),
+    readJson("labels"),
+    readJson("trainingModel")
   ]);
-  return { listings, filters, sellers, config };
+  return { listings, filters, sellers, config, labels, trainingModel };
 }

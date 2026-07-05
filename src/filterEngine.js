@@ -4,6 +4,7 @@ export const POST_TYPES = {
   WTF: "WTF",
   SPAM: "SPAM",
   BAD_PRICER: "BAD_PRICER",
+  LEARNED_SKIP: "LEARNED_SKIP",
   SELLER_BLOCKED: "SELLER_BLOCKED",
   UNKNOWN: "UNKNOWN"
 };
@@ -107,7 +108,7 @@ function hasSuspiciousShape(text, listing) {
   const caps = text.match(/[A-Z]/g) || [];
   const excessiveCaps = letters.length > 20 && caps.length / letters.length > 0.6;
   const brandNewNoRating = Number(listing.seller_rating) === 0 && Number(listing.days_listed) <= 1;
-  return repeatedPunctuation || hasUrl || excessiveCaps || brandNewNoRating;
+  return hasUrl || repeatedPunctuation || excessiveCaps || (brandNewNoRating && (hasUrl || repeatedPunctuation || excessiveCaps));
 }
 
 function result(postType, isFiltered, spamScore, reasons) {

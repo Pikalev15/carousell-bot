@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyListing, scoreDeal } from "./filterEngine.js";
 import { searchCarousell } from "./carousellSearch.js";
 import { getState, readJson, writeJson } from "./store.js";
+import { labelPolarity, predictPreference, trainModel } from "./trainingModel.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -53,7 +54,7 @@ async function handleApi(request, response, url) {
   if (request.method === "GET" && url.pathname.startsWith("/api/listings/")) {
     const id = Number(url.pathname.split("/").pop());
     const state = await getState();
-    const listing = buildListings(state).find((item) => item.id === id);
+    const listing = buildListings(state, "", { includeFiltered: true }).find((item) => item.id === id);
     if (!listing) {
       sendJson(response, 404, { error: "Listing not found" });
       return;
@@ -167,7 +168,7 @@ async function handleApi(request, response, url) {
     const body = await readBody(request);
     const listingId = Number(body.listing_id);
     const rating = String(body.rating || "");
-    if (!listingId || !["good", "skip", "bought", "unmarked"].includes(rating)) {
+    if (!listingId || !["good", "skip", "bought", "spam", "not_spam", "bad_pricer", "unmarked"].includes(rating)) {
       sendJson(response, 400, { error: "listing_id and valid rating are required" });
       return;
     }
@@ -181,12 +182,23 @@ async function handleApi(request, response, url) {
       timestamp: new Date().toISOString()
     });
     await writeJson("labels", next);
+    await retrainPreferenceModel();
     sendJson(response, 200, next.find((label) => label.listing_id === listingId));
     return;
   }
 
   if (request.method === "GET" && url.pathname === "/api/feedback/labels") {
     sendJson(response, 200, await readJson("labels"));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/training/model") {
+    sendJson(response, 200, await readJson("trainingModel"));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/training/retrain") {
+    sendJson(response, 200, await retrainPreferenceModel());
     return;
   }
 
@@ -234,17 +246,23 @@ function buildListings(state, query = "", options = {}) {
   const needle = String(query || "").trim().toLowerCase();
   const minPrice = options.minPrice === null || options.minPrice === undefined || options.minPrice === "" ? null : Number(options.minPrice);
   const maxPrice = options.maxPrice === null || options.maxPrice === undefined || options.maxPrice === "" ? null : Number(options.maxPrice);
+  const labelsByListing = new Map((state.labels || []).map((label) => [Number(label.listing_id), label]));
   return state.listings
     .filter((listing) => {
       if (!needle) return true;
       return `${listing.title} ${listing.description} ${listing.category}`.toLowerCase().includes(needle);
     })
     .map((listing) => {
-      const classification = classifyListing(listing, state.filters, state.sellers, state.config);
+      const explicitLabel = labelsByListing.get(Number(listing.id));
+      const prediction = predictPreference(listing, state.trainingModel);
+      const classification = applyTrainingOverrides(classifyListing(listing, state.filters, state.sellers, state.config), explicitLabel, prediction, state.trainingModel);
+      const score = classification.is_filtered ? null : scoreDeal(listing, state.config);
+      if (score) score.training_preference = prediction.preference_score;
       return {
         ...listing,
         classification,
-        score: classification.is_filtered ? null : scoreDeal(listing, state.config)
+        training: prediction,
+        score
       };
     })
     .filter((listing) => {
@@ -253,6 +271,60 @@ function buildListings(state, query = "", options = {}) {
       if (maxPrice !== null && Number(listing.current_price || 0) > maxPrice) return false;
       return true;
     });
+}
+
+async function retrainPreferenceModel() {
+  const [listings, labels] = await Promise.all([readJson("listings"), readJson("labels")]);
+  const model = trainModel(listings, labels);
+  await writeJson("trainingModel", model);
+  return model;
+}
+
+function applyTrainingOverrides(classification, label, prediction, model) {
+  const rating = String(label?.user_rating || "");
+  const polarity = labelPolarity(rating);
+
+  if (polarity === "positive") {
+    return {
+      ...classification,
+      post_type: "WTS",
+      is_filtered: false,
+      spam_score: 0,
+      reasons: ["User trained as good", ...classification.reasons]
+    };
+  }
+
+  if (rating === "spam" || rating === "bad_pricer") {
+    return {
+      ...classification,
+      post_type: rating === "spam" ? "SPAM" : "BAD_PRICER",
+      is_filtered: true,
+      spam_score: 100,
+      reasons: [`User trained as ${rating.replace("_", " ")}`, ...classification.reasons]
+    };
+  }
+
+  if (rating === "skip") {
+    return {
+      ...classification,
+      post_type: "LEARNED_SKIP",
+      is_filtered: true,
+      spam_score: Math.max(classification.spam_score, 75),
+      reasons: ["User trained as skip", ...classification.reasons]
+    };
+  }
+
+  if (!classification.is_filtered && model?.example_count >= 5 && prediction.preference_score <= 18 && prediction.confidence >= 0.25) {
+    return {
+      ...classification,
+      post_type: "LEARNED_SKIP",
+      is_filtered: true,
+      spam_score: 70,
+      reasons: [`Learned low preference (${prediction.preference_score}/100)`, ...prediction.reasons, ...classification.reasons]
+    };
+  }
+
+  return classification;
 }
 
 async function recordSearch(query, mode) {

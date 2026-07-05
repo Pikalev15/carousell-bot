@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "trained_at": null,
+  "example_count": 0,
+  "positive_count": 0,
+  "negative_count": 0,
+  "token_weights": {},
+  "seller_weights": {}
+}

@@ -6,6 +6,7 @@ const state = {
   labels: [],
   searches: [],
   stats: {},
+  trainingModel: {},
   searchResults: [],
   lastQuery: ""
 };
@@ -62,19 +63,80 @@ document.getElementById("search-max-price").addEventListener("input", renderSear
 document.getElementById("search-more").addEventListener("click", async () => {
   await runSearch("more");
 });
+document.getElementById("retrain-model").addEventListener("click", async () => {
+  state.trainingModel = await api.post("/api/training/retrain", {});
+  await load();
+});
+
+document.addEventListener("click", async (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+
+  if (button.dataset.blockSeller) {
+    await api.post(`/api/sellers/blacklist/${encodeURIComponent(button.dataset.blockSeller)}`, {
+      seller_name: button.dataset.sellerName,
+      reason: "Blocked from listing card"
+    });
+    await load();
+  }
+
+  if (button.dataset.deleteFilter) {
+    await api.delete(`/api/filters/blacklist/${button.dataset.deleteFilter}`);
+    await load();
+  }
+
+  if (button.dataset.deleteSeller) {
+    await api.delete(`/api/sellers/blacklist/${encodeURIComponent(button.dataset.deleteSeller)}`);
+    await load();
+  }
+
+  if (button.dataset.label) {
+    await api.post("/api/feedback/label", {
+      listing_id: Number(button.dataset.listingId),
+      rating: button.dataset.label,
+      asked_price: Number(button.dataset.price)
+    });
+    await load();
+  }
+
+  if (button.dataset.msrp) {
+    const result = await api.post("/api/msrp/lookup", {
+      title: button.dataset.title,
+      price: Number(button.dataset.price)
+    });
+    document.querySelectorAll(`[data-msrp-result="${button.dataset.msrp}"]`).forEach((target) => {
+      target.textContent = `MSRP ${formatMoney(result.msrp)} | ${result.discount_percent}% off | ${result.source}`;
+    });
+  }
+
+  if (button.dataset.viewListing) {
+    const listing = await api.get(`/api/listings/${button.dataset.viewListing}`);
+    openDetails(listing);
+  }
+
+  if (button.dataset.openUrl) {
+    window.open(button.dataset.openUrl, "_blank", "noopener");
+  }
+
+  if (button.dataset.repeatSearch) {
+    document.getElementById("search-input").value = button.dataset.repeatSearch;
+    await runSearch("web");
+  }
+});
 
 async function load() {
   try {
-    const [listings, deals, filters, sellers, stats, labels, searches] = await Promise.all([
+    const [listings, deals, filters, sellers, stats, labels, searches, trainingModel] = await Promise.all([
       api.get("/api/listings?include_filtered=true"),
       api.get("/api/deals"),
       api.get("/api/filters/blacklist"),
       api.get("/api/sellers/blacklist"),
       api.get("/api/filters/stats"),
       api.get("/api/feedback/labels"),
-      api.get("/api/search/history")
+      api.get("/api/search/history"),
+      api.get("/api/training/model")
     ]);
-    Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches });
+    Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches, trainingModel });
     if (state.lastQuery) {
       state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, state.lastQuery) && !listing.classification.is_filtered), "search");
     }
@@ -90,8 +152,8 @@ function renderAll() {
   renderListings();
   renderSearch();
   renderFilters();
+  renderTraining();
   renderSellers();
-  bindActionButtons();
 }
 
 async function runSearch(mode) {
@@ -206,70 +268,14 @@ function renderSellers() {
     : `<p class="meta">No blocked sellers.</p>`;
 }
 
-function bindActionButtons() {
-  document.querySelectorAll("[data-block-seller]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await api.post(`/api/sellers/blacklist/${encodeURIComponent(button.dataset.blockSeller)}`, {
-        seller_name: button.dataset.sellerName,
-        reason: "Blocked from listing card"
-      });
-      await load();
-    });
-  });
-
-  document.querySelectorAll("[data-delete-filter]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await api.delete(`/api/filters/blacklist/${button.dataset.deleteFilter}`);
-      await load();
-    });
-  });
-
-  document.querySelectorAll("[data-delete-seller]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await api.delete(`/api/sellers/blacklist/${encodeURIComponent(button.dataset.deleteSeller)}`);
-      await load();
-    });
-  });
-
-  document.querySelectorAll("[data-label]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      await api.post("/api/feedback/label", {
-        listing_id: Number(button.dataset.listingId),
-        rating: button.dataset.label,
-        asked_price: Number(button.dataset.price)
-      });
-      await load();
-    });
-  });
-
-  document.querySelectorAll("[data-msrp]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const result = await api.post("/api/msrp/lookup", {
-        title: button.dataset.title,
-        price: Number(button.dataset.price)
-      });
-      const target = document.querySelector(`[data-msrp-result="${button.dataset.msrp}"]`);
-      target.textContent = `MSRP ${formatMoney(result.msrp)} | ${result.discount_percent}% off | ${result.source}`;
-    });
-  });
-
-  document.querySelectorAll("[data-view-listing]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      const listing = await api.get(`/api/listings/${button.dataset.viewListing}`);
-      openDetails(listing);
-    });
-  });
-
-  document.querySelectorAll("[data-open-url]").forEach((button) => {
-    button.addEventListener("click", () => window.open(button.dataset.openUrl, "_blank", "noopener"));
-  });
-
-  document.querySelectorAll("[data-repeat-search]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      document.getElementById("search-input").value = button.dataset.repeatSearch;
-      await runSearch("web");
-    });
-  });
+function renderTraining() {
+  const model = state.trainingModel || {};
+  document.getElementById("training-stats").innerHTML = `
+    <div><span class="meta">Examples</span><strong>${model.example_count || 0}</strong></div>
+    <div><span class="meta">Good</span><strong>${model.positive_count || 0}</strong></div>
+    <div><span class="meta">Skip/spam</span><strong>${model.negative_count || 0}</strong></div>
+    <div><span class="meta">Updated</span><strong>${model.trained_at ? new Date(model.trained_at).toLocaleTimeString() : "Never"}</strong></div>
+  `;
 }
 
 function card(listing) {
@@ -279,7 +285,7 @@ function card(listing) {
     ? `<span class="badge bad">${classification.post_type}</span>`
     : `<span class="badge good">Score ${listing.score.deal_score}</span>`;
   const score = listing.score
-    ? `<p class="meta">Est. negotiate: ${formatMoney(listing.score.estimated_negotiation_price)} | vs median: ${listing.score.price_vs_median}% | trend: ${listing.score.trend_direction}</p>`
+    ? `<p class="meta">Est. negotiate: ${formatMoney(listing.score.estimated_negotiation_price)} | preference: ${listing.score.training_preference}/100 | trend: ${listing.score.trend_direction}</p>`
     : "";
   const reasons = classification.reasons.length
     ? `<ul class="reasons">${classification.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`
@@ -305,6 +311,8 @@ function card(listing) {
         <button data-label="good" data-listing-id="${listing.id}" data-price="${listing.current_price}">Good</button>
         <button data-label="skip" data-listing-id="${listing.id}" data-price="${listing.current_price}">Skip</button>
         <button data-label="bought" data-listing-id="${listing.id}" data-price="${listing.current_price}">Bought</button>
+        <button data-label="spam" data-listing-id="${listing.id}" data-price="${listing.current_price}">Spam</button>
+        <button data-label="not_spam" data-listing-id="${listing.id}" data-price="${listing.current_price}">Not spam</button>
         <button data-msrp="${listing.id}" data-title="${escapeHtml(listing.title)}" data-price="${listing.current_price}">MSRP</button>
         <button data-block-seller="${listing.seller_id}" data-seller-name="${escapeHtml(listing.seller_name)}">Block</button>
       </div>

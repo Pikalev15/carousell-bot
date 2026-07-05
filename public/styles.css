@@ -312,6 +312,39 @@ select:focus {
   background: #fff;
 }
 
+.training-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 8px 26px rgba(27, 39, 51, 0.05);
+}
+
+.training-stats {
+  display: grid;
+  flex: 1;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.training-stats div {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.training-stats strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+}
+
 .filter-bar label {
   display: grid;
   min-width: 140px;
@@ -424,6 +457,7 @@ dialog::backdrop {
   .stats,
   .form-row,
   .search-row,
+  .training-stats,
   .row {
     grid-template-columns: 1fr;
   }
