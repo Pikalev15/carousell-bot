@@ -47,7 +47,7 @@ document.getElementById("filter-form").addEventListener("submit", async (event) 
 
 document.getElementById("search-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  await runSearch("normal");
+  await runSearch("web");
 });
 
 document.getElementById("search-more").addEventListener("click", async () => {
@@ -55,20 +55,24 @@ document.getElementById("search-more").addEventListener("click", async () => {
 });
 
 async function load() {
-  const [listings, deals, filters, sellers, stats, labels, searches] = await Promise.all([
-    api.get("/api/listings"),
-    api.get("/api/deals"),
-    api.get("/api/filters/blacklist"),
-    api.get("/api/sellers/blacklist"),
-    api.get("/api/filters/stats"),
-    api.get("/api/feedback/labels"),
-    api.get("/api/search/history")
-  ]);
-  Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches });
-  if (state.lastQuery) {
-    state.searchResults = state.listings.filter((listing) => matchesQuery(listing, state.lastQuery));
+  try {
+    const [listings, deals, filters, sellers, stats, labels, searches] = await Promise.all([
+      api.get("/api/listings"),
+      api.get("/api/deals"),
+      api.get("/api/filters/blacklist"),
+      api.get("/api/sellers/blacklist"),
+      api.get("/api/filters/stats"),
+      api.get("/api/feedback/labels"),
+      api.get("/api/search/history")
+    ]);
+    Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches });
+    if (state.lastQuery) {
+      state.searchResults = state.listings.filter((listing) => matchesQuery(listing, state.lastQuery));
+    }
+    renderAll();
+  } catch (error) {
+    document.getElementById("search-summary").textContent = `Could not reach the local server: ${error.message}`;
   }
-  renderAll();
 }
 
 function renderAll() {
@@ -85,17 +89,22 @@ async function runSearch(mode) {
   const input = document.getElementById("search-input");
   const query = input.value.trim() || state.lastQuery;
   if (!query) return;
-  const payload = await api.post("/api/search", { query, mode });
-  state.lastQuery = query;
-  state.searchResults = payload.results;
-  state.searches = payload.history;
-  await load();
-  showView("search");
-  document.getElementById("search-input").value = query;
-  document.getElementById("search-summary").textContent =
-    mode === "more"
-      ? `Added more local test results for "${query}".`
-      : `Found ${state.searchResults.length} local results for "${query}".`;
+  document.getElementById("search-summary").textContent = mode === "more" ? "Searching Carousell for more results..." : "Searching Carousell...";
+  try {
+    const payload = await api.post("/api/search", { query, mode });
+    state.lastQuery = query;
+    state.searchResults = payload.results;
+    state.searches = payload.history;
+    await load();
+    showView("search");
+    document.getElementById("search-input").value = query;
+    const source = payload.source === "carousell-web" ? "Carousell web" : payload.source;
+    const added = payload.added ? ` Added ${payload.added} new listings.` : "";
+    const warning = payload.warning ? ` ${payload.warning}` : "";
+    document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} results for "${query}" via ${source}.${added}${warning}`;
+  } catch (error) {
+    document.getElementById("search-summary").textContent = `Search failed: ${error.message}`;
+  }
 }
 
 function showView(view) {
@@ -135,7 +144,7 @@ function renderListings() {
 function renderSearch() {
   document.getElementById("search-results").innerHTML = state.searchResults.length
     ? state.searchResults.map(card).join("")
-    : `<p class="meta">Run a search to see matching local listings. Use Search more to add extra test posts.</p>`;
+    : `<p class="meta">Run a web search to pull matching Carousell listings. Search more tries a larger pull and falls back to demo rows only if web search fails.</p>`;
   document.getElementById("search-history").innerHTML = state.searches.length
     ? state.searches
         .slice(0, 8)
@@ -242,7 +251,7 @@ function bindActionButtons() {
   document.querySelectorAll("[data-repeat-search]").forEach((button) => {
     button.addEventListener("click", async () => {
       document.getElementById("search-input").value = button.dataset.repeatSearch;
-      await runSearch("normal");
+      await runSearch("web");
     });
   });
 }

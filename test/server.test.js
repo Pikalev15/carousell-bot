@@ -16,7 +16,7 @@ test("serves health and listings endpoints", async () => {
     const search = await fetch(`http://localhost:${port}/api/search`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ query: "MacBook" })
+      body: JSON.stringify({ query: "MacBook", mode: "local" })
     }).then((response) => response.json());
     const label = await fetch(`http://localhost:${port}/api/feedback/label`, {
       method: "POST",

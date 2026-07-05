@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyListing, scoreDeal } from "./filterEngine.js";
+import { searchCarousell } from "./carousellSearch.js";
 import { getState, readJson, writeJson } from "./store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -69,19 +70,24 @@ async function handleApi(request, response, url) {
   if (request.method === "POST" && url.pathname === "/api/search") {
     const body = await readBody(request);
     const query = String(body.query || "").trim();
-    const mode = body.mode === "more" ? "more" : "normal";
+    const mode = body.mode === "more" ? "more" : body.mode === "local" ? "local" : "web";
     if (!query) {
       sendJson(response, 400, { error: "query is required" });
       return;
     }
 
     await recordSearch(query, mode);
-    if (mode === "more") await addDemoSearchResults(query);
+    const webSearch = mode !== "local" ? await searchAndStoreWebResults(query, mode) : null;
+    if (mode === "more" && (!webSearch || webSearch.added === 0)) await addDemoSearchResults(query);
 
     const state = await getState();
     sendJson(response, 200, {
       query,
       mode,
+      source: webSearch?.source || (mode === "more" ? "local-demo" : "local"),
+      source_url: webSearch?.url || null,
+      added: webSearch?.added || 0,
+      warning: webSearch?.warning || null,
       results: buildListings(state, query),
       history: await readJson("searches")
     });
@@ -242,6 +248,38 @@ async function recordSearch(query, mode) {
     timestamp: new Date().toISOString()
   });
   await writeJson("searches", searches.slice(0, 50));
+}
+
+async function searchAndStoreWebResults(query, mode) {
+  try {
+    const webSearch = await searchCarousell(query, { limit: mode === "more" ? 40 : 24 });
+    const listings = await readJson("listings");
+    const existing = new Set(listings.map((listing) => listing.carousell_id));
+    const additions = webSearch.results
+      .filter((listing) => !existing.has(listing.carousell_id))
+      .map((listing, index) => ({
+        id: Math.max(0, ...listings.map((item) => item.id || 0)) + index + 1,
+        ...listing
+      }));
+
+    if (additions.length > 0) {
+      listings.push(...additions);
+      await writeJson("listings", listings);
+    }
+
+    return {
+      source: "carousell-web",
+      url: webSearch.url,
+      added: additions.length
+    };
+  } catch (error) {
+    return {
+      source: "local-fallback",
+      url: null,
+      added: 0,
+      warning: `Web search failed: ${error.message}`
+    };
+  }
 }
 
 async function addDemoSearchResults(query) {
