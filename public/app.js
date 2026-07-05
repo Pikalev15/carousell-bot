@@ -46,9 +46,11 @@ document.getElementById("dashboard-search-form").addEventListener("submit", asyn
 document.getElementById("listing-filter").addEventListener("change", renderListings);
 document.getElementById("listing-min-price").addEventListener("input", renderListings);
 document.getElementById("listing-max-price").addEventListener("input", renderListings);
+document.getElementById("listing-recent-filter").addEventListener("change", renderListings);
 document.getElementById("clear-price-filters").addEventListener("click", () => {
   document.getElementById("listing-min-price").value = "1";
   document.getElementById("listing-max-price").value = "";
+  document.getElementById("listing-recent-filter").value = "";
   renderListings();
 });
 document.getElementById("details-close").addEventListener("click", () => document.getElementById("details-modal").close());
@@ -67,6 +69,7 @@ document.getElementById("search-form").addEventListener("submit", async (event) 
 });
 document.getElementById("search-min-price").addEventListener("input", renderSearch);
 document.getElementById("search-max-price").addEventListener("input", renderSearch);
+document.getElementById("search-recent-filter").addEventListener("change", renderSearch);
 
 document.getElementById("search-more").addEventListener("click", async () => {
   await runSearch("more");
@@ -176,6 +179,7 @@ async function runSearch(mode) {
       mode,
       min_price: getNumberValue("search-min-price", 1),
       max_price: getNumberValue("search-max-price", null),
+      max_age_hours: getNumberValue("search-recent-filter", null),
       include_filtered: true
     });
     state.lastQuery = query;
@@ -315,12 +319,13 @@ function card(listing) {
       <div class="card-header">
         <div>
           <p class="title">${escapeHtml(listing.title)}</p>
-          <p class="meta">${escapeHtml(listing.seller_name)} | ${listing.seller_rating} stars | ${listing.days_listed} days | ${escapeHtml(listing.location)}</p>
+          <p class="meta">${escapeHtml(listing.seller_name)} | ${listing.seller_rating} stars | ${formatAge(listing)} | ${escapeHtml(listing.location)}</p>
         </div>
         <div class="badge-stack">${badge}${labelBadge}</div>
       </div>
       <div class="price">${formatMoney(listing.current_price)}</div>
       ${score}
+      ${listing.price_source === "description" ? `<p class="meta">Price corrected from description. Card price was ${formatMoney(listing.display_price)}.</p>` : ""}
       ${reasons}
       <p class="meta" data-msrp-result="${listing.id}"></p>
       <div class="actions">
@@ -360,12 +365,15 @@ function matchesQuery(listing, query) {
 function applyPriceFilters(listings, scope) {
   const minId = scope === "search" ? "search-min-price" : "listing-min-price";
   const maxId = scope === "search" ? "search-max-price" : "listing-max-price";
+  const recentId = scope === "search" ? "search-recent-filter" : "listing-recent-filter";
   const min = getNumberValue(minId, 1);
   const max = getNumberValue(maxId, null);
+  const maxAgeHours = getNumberValue(recentId, null);
   return listings.filter((listing) => {
     const price = Number(listing.current_price || 0);
     if (min !== null && price < min) return false;
     if (max !== null && price > max) return false;
+    if (maxAgeHours !== null && getListingAgeHours(listing) > maxAgeHours) return false;
     return true;
   });
 }
@@ -379,6 +387,23 @@ function getNumberValue(id, fallback) {
 
 function formatMoney(value) {
   return `$${Number(value || 0).toLocaleString()}`;
+}
+
+function formatAge(listing) {
+  const hours = getListingAgeHours(listing);
+  if (hours < 1) return `${Math.max(0, Math.round(hours * 60))} min`;
+  if (hours < 24) return `${Math.round(hours)} hr`;
+  return `${Math.round(hours / 24)} days`;
+}
+
+function getListingAgeHours(listing) {
+  if (listing.listed_age_minutes !== null && listing.listed_age_minutes !== undefined) {
+    return Number(listing.listed_age_minutes) / 60;
+  }
+  if (listing.listed_at) {
+    return Math.max(0, (Date.now() - new Date(listing.listed_at).getTime()) / 3600000);
+  }
+  return Number(listing.days_listed || 0) * 24;
 }
 
 async function checkedJson(response) {

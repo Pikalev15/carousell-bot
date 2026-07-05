@@ -16,6 +16,7 @@ test("serves health and listings endpoints", async () => {
     const listings = await listingsResponse.json();
     const allListings = await fetch(`http://localhost:${port}/api/listings?include_filtered=true`).then((response) => response.json());
     const pricedListings = await fetch(`http://localhost:${port}/api/listings?include_filtered=true&min_price=900&max_price=1200`).then((response) => response.json());
+    const recentListings = await fetch(`http://localhost:${port}/api/listings?include_filtered=true&max_age_hours=24`).then((response) => response.json());
     const search = await fetch(`http://localhost:${port}/api/search`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -39,6 +40,7 @@ test("serves health and listings endpoints", async () => {
     assert.equal(listings.some((listing) => listing.current_price === 0), false);
     assert.ok(allListings.length >= listings.length);
     assert.equal(pricedListings.every((listing) => listing.current_price >= 900 && listing.current_price <= 1200), true);
+    assert.equal(recentListings.every((listing) => (listing.listed_age_minutes ?? listing.days_listed * 1440) <= 1440), true);
     assert.equal(search.query, "MacBook");
     assert.equal(Array.isArray(search.results), true);
     assert.equal(label.user_rating, "good");

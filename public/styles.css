@@ -253,7 +253,7 @@ main {
 
 .search-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) 110px 110px auto auto;
+  grid-template-columns: minmax(220px, 1.4fr) 110px 110px 130px auto auto;
   gap: 10px;
   margin-bottom: 12px;
   padding: 14px;

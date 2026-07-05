@@ -9,7 +9,7 @@ const CHROME_PATHS = [
 export async function searchCarousell(query, options = {}) {
   const limit = Number(options.limit || 24);
   const searchUrl = `${CAROUSELL_BASE_URL}/search/${encodeURIComponent(query)}?addRecent=true&canChangeKeyword=true&includeSuggestions=true&searchId=${Date.now()}`;
-  const pageData = await fetchWithBrowser(searchUrl, options);
+  const pageData = await fetchWithBrowser(searchUrl, { ...options, limit });
   const found = new Map();
 
   for (const listing of pageData.domListings) {
@@ -57,7 +57,7 @@ async function fetchWithBrowser(url, options = {}) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
     await page.waitForSelector('a[href*="/p/"], script#__NEXT_DATA__', { timeout: 20000 }).catch(() => {});
-    const domListings = await page.evaluate(() => {
+    let domListings = await page.evaluate(() => {
       const anchors = [...document.querySelectorAll('a[href*="/p/"]')];
       return anchors.slice(0, 80).map((anchor) => {
         let node = anchor;
@@ -77,6 +77,7 @@ async function fetchWithBrowser(url, options = {}) {
         };
       });
     });
+    domListings = await enrichListingDetails(page, domListings, options.limit || 24);
     return {
       html: await page.content(),
       domListings
@@ -160,29 +161,175 @@ function collectListingsFromAnchors(html, found, query) {
 
 function normalizeListing(input) {
   const cardText = String(input.cardText || "");
-  const title = cleanTitle(String(input.title || cardText).trim(), cardText);
+  const parsedCard = parseCardText(cardText);
+  const title = cleanTitle(String(parsedCard.title || input.title || cardText).trim(), cardText);
   const url = normalizeUrl(input.url);
   if (!title || title.length < 3 || !url) return null;
   if (/^(buyer protection|instantbuy|chat|like|share)$/i.test(title)) return null;
-  const price = parsePrice(input.price || cardText);
+  const cardPrice = parsePrice(input.price || cardText);
+  const detailPrice = isPlaceholderPrice(cardPrice) ? extractRealPriceFromDescription(input.description || "") : 0;
+  const price = detailPrice || cardPrice;
+  const listedAgeMinutes = input.listedAgeMinutes ?? parsedCard.listedAgeMinutes ?? null;
 
   const carousellId = input.id || url.match(/\/p\/[^/]+-(\d+)/)?.[1] || stableId(`${title}-${url}`);
   return {
     carousell_id: `web-${carousellId}`,
-    title,
-    description: input.description || cardText,
+    title: title === "Buyer Protection" && parsedCard.title ? parsedCard.title : title,
+    description: input.description || "",
     category: inferCategory(input.query || title),
-    condition: "unknown",
-    seller_id: input.sellerId || `web-seller-${stableId(input.sellerName || url)}`,
-    seller_name: input.sellerName || "Carousell seller",
+    condition: normalizeCondition(input.condition || parsedCard.condition),
+    seller_id: input.sellerId || `web-seller-${stableId(input.sellerName || parsedCard.sellerName || url)}`,
+    seller_name: input.sellerName || parsedCard.sellerName || "Carousell seller",
     seller_rating: 0,
     location: "Carousell SG",
-    days_listed: 0,
+    days_listed: listedAgeMinutes === null ? 0 : Math.max(0, Math.floor(listedAgeMinutes / 1440)),
+    listed_age_minutes: listedAgeMinutes,
+    listed_at: listedAgeMinutes === null ? null : new Date(Date.now() - listedAgeMinutes * 60 * 1000).toISOString(),
     current_price: price > 99999 ? 0 : price,
+    display_price: cardPrice,
+    price_source: detailPrice ? "description" : "card",
     image_urls: input.imageUrls || [],
     carousell_url: url,
     scraped_at: new Date().toISOString()
   };
+}
+
+async function enrichListingDetails(page, listings, limit) {
+  const enriched = [];
+  const seen = new Set();
+  const candidates = listings.slice(0, Math.max(limit, 12));
+
+  for (const listing of candidates) {
+    const url = listing.url;
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+
+    const parsed = parseCardText(listing.cardText || "");
+    const needsDetail = isPlaceholderPrice(parsePrice(listing.price || listing.cardText)) || enriched.length < 8;
+    if (!needsDetail) {
+      enriched.push({ ...listing, ...parsed });
+      continue;
+    }
+
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+      const details = await page.evaluate(() => {
+        const bodyText = document.body.innerText || "";
+        const metaDescription = document.querySelector('meta[name="description"]')?.content || "";
+        const jsonLd = [...document.querySelectorAll('script[type="application/ld+json"]')]
+          .map((script) => script.textContent || "")
+          .join("\n");
+        return { bodyText, metaDescription, jsonLd };
+      });
+      enriched.push({
+        ...listing,
+        ...parsed,
+        description: extractDescription(details.bodyText, details.metaDescription, parsed.title),
+        price: extractRealPriceFromDescription(`${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`) || listing.price
+      });
+    } catch {
+      enriched.push({ ...listing, ...parsed });
+    }
+  }
+
+  return enriched;
+}
+
+export function parseCardText(cardText) {
+  const lines = String(cardText)
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !/^(buyer protection|instantbuy|chat|like|share|preferred|spotlight|bumped)$/i.test(line));
+
+  const priceIndex = lines.findIndex((line) => /(?:S\$|\$|SGD)\s?[\d,]+/i.test(line));
+  const timeIndex = lines.findIndex((line) => parseListedAgeMinutes(line) !== null);
+  const sellerName = timeIndex > 0 ? lines[0] : lines[0] && priceIndex > 2 ? lines[0] : "";
+  const title = priceIndex > 0 ? lines[priceIndex - 1] : cleanTitle(lines.slice(timeIndex + 1).join("\n"), cardText);
+  const condition = priceIndex >= 0 ? lines.slice(priceIndex + 1).find((line) => /new|used|condition|well used|lightly used/i.test(line)) : "";
+
+  return {
+    sellerName,
+    title,
+    condition,
+    listedAgeMinutes: timeIndex >= 0 ? parseListedAgeMinutes(lines[timeIndex]) : null
+  };
+}
+
+function parseListedAgeMinutes(value) {
+  const text = String(value || "").toLowerCase();
+  if (/just now|seconds? ago|sec ago/.test(text)) return 0;
+  const match = text.match(/(\d+)\s*(minute|min|hour|day|week|month|year)s?\s*ago/);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  const unit = match[2];
+  if (unit.startsWith("min")) return amount;
+  if (unit.startsWith("hour")) return amount * 60;
+  if (unit.startsWith("day")) return amount * 1440;
+  if (unit.startsWith("week")) return amount * 10080;
+  if (unit.startsWith("month")) return amount * 43200;
+  if (unit.startsWith("year")) return amount * 525600;
+  return null;
+}
+
+function extractDescription(bodyText, metaDescription, title) {
+  const meta = String(metaDescription || "").trim();
+  if (meta && !meta.toLowerCase().includes("carousell")) return cleanDescriptionText(meta, title);
+
+  const lines = String(bodyText || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const titleIndex = lines.findIndex((line) => title && line.toLowerCase() === title.toLowerCase());
+  const afterTitle = titleIndex >= 0 ? lines.slice(titleIndex + 1) : lines;
+  const stopIndex = afterTitle.findIndex((line) => /^(meet-up|delivery|payment|seller information|report listing|similar listings)$/i.test(line));
+  const descriptionLines = (stopIndex >= 0 ? afterTitle.slice(0, stopIndex) : afterTitle)
+    .filter((line) => !/^(S\$|\$|SGD)\s?[\d,]+/i.test(line))
+    .filter((line) => !/^(brand new|like new|lightly used|well used|heavily used|new)$/i.test(line))
+    .filter((line) => !/^\d+ (minute|min|hour|day|week|month|year)s? ago$/i.test(line))
+    .slice(0, 12);
+  return cleanDescriptionText(descriptionLines.join("\n"), title).slice(0, 1200);
+}
+
+export function extractRealPriceFromDescription(description) {
+  const text = String(description || "");
+  const patterns = [
+    /(?:real|actual|selling|letting go|take|deal|price|asking|each|all for)\s*(?:price)?\s*(?:is|at|:|-)?\s*(?:S\$|\$|SGD)\s?([\d,]+(?:\.\d+)?)/i,
+    /(?:S\$|\$|SGD)\s?([\d,]+(?:\.\d+)?)\s*(?:firm|fixed|nett|each|for all|only)?/i
+  ];
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const price = Math.round(Number(match[1].replaceAll(",", "")));
+    if (price > 1 && price < 100000) return price;
+  }
+  return 0;
+}
+
+function isPlaceholderPrice(price) {
+  return [0, 1, 8, 88, 888, 8888, 9999, 12345].includes(Number(price));
+}
+
+function normalizeCondition(value) {
+  const text = String(value || "").toLowerCase();
+  if (/like new|lightly used/.test(text)) return "like_new";
+  if (/brand new|new/.test(text)) return "new";
+  if (/well used|used/.test(text)) return "good";
+  if (/heavily used|fair/.test(text)) return "fair";
+  return "unknown";
+}
+
+function cleanDescriptionText(value, title) {
+  const escapedTitle = escapeRegExp(title || "");
+  return String(value || "")
+    .replace(new RegExp(`^Buy\\s+${escapedTitle}\\s+in\\s+Singapore,?\\s*Singapore\\.\\s*`, "i"), "")
+    .replace(/^Buy\s+.+?\s+in\s+Singapore,?\s*Singapore\.\s*/i, "")
+    .trim();
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function cleanTitle(value, cardText = "") {
