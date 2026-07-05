@@ -150,6 +150,7 @@ main {
   display: grid;
   grid-template-columns: repeat(5, minmax(120px, 1fr));
   gap: 12px;
+  margin-bottom: 24px;
 }
 
 .stat,
@@ -262,6 +263,29 @@ main {
   box-shadow: 0 8px 26px rgba(27, 39, 51, 0.06);
 }
 
+.command-bar {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  margin: -8px 0 18px;
+  padding: 12px;
+  border: 1px solid rgba(15, 122, 95, 0.18);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff, #f8fbfa);
+  box-shadow: 0 10px 30px rgba(27, 39, 51, 0.06);
+}
+
+.command-bar button {
+  color: #fff;
+  border-color: var(--green);
+  background: var(--green);
+}
+
+.command-bar button:hover {
+  border-color: var(--green-strong);
+  background: var(--green-strong);
+}
+
 .notice {
   min-height: 22px;
   margin-bottom: 18px;
@@ -372,6 +396,15 @@ select:focus {
   font-size: 13px;
 }
 
+.actions button[data-label="spam"],
+.actions button[data-block-seller] {
+  color: var(--red);
+}
+
+.actions button[data-label="not_spam"] {
+  color: var(--green);
+}
+
 .actions button:first-child,
 .search-row button[type="submit"] {
   color: #fff;
@@ -457,6 +490,7 @@ dialog::backdrop {
   .stats,
   .form-row,
   .search-row,
+  .command-bar,
   .training-stats,
   .row {
     grid-template-columns: 1fr;

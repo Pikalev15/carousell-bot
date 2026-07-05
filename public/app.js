@@ -35,6 +35,14 @@ document.querySelectorAll(".nav-button").forEach((button) => {
 });
 
 document.getElementById("refresh").addEventListener("click", load);
+document.getElementById("dashboard-search-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const query = document.getElementById("dashboard-query").value.trim();
+  if (!query) return;
+  document.getElementById("search-input").value = query;
+  showView("search");
+  await runSearch("web");
+});
 document.getElementById("listing-filter").addEventListener("change", renderListings);
 document.getElementById("listing-min-price").addEventListener("input", renderListings);
 document.getElementById("listing-max-price").addEventListener("input", renderListings);
@@ -138,7 +146,7 @@ async function load() {
     ]);
     Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches, trainingModel });
     if (state.lastQuery) {
-      state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, state.lastQuery) && !listing.classification.is_filtered), "search");
+      state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, state.lastQuery)), "search");
     }
     renderAll();
   } catch (error) {
@@ -148,6 +156,7 @@ async function load() {
 
 function renderAll() {
   renderStats();
+  renderLatestListings();
   renderDeals();
   renderListings();
   renderSearch();
@@ -167,7 +176,7 @@ async function runSearch(mode) {
       mode,
       min_price: getNumberValue("search-min-price", 1),
       max_price: getNumberValue("search-max-price", null),
-      include_filtered: false
+      include_filtered: true
     });
     state.lastQuery = query;
     state.searchResults = payload.results;
@@ -178,7 +187,7 @@ async function runSearch(mode) {
     const source = payload.source === "carousell-web" ? "Carousell web" : payload.source;
     const added = payload.added ? ` Added ${payload.added} new listings.` : "";
     const warning = payload.warning ? ` ${payload.warning}` : "";
-    document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} clean results for "${query}" via ${source}.${added}${warning}`;
+    document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}" via ${source}.${added}${warning}`;
   } catch (error) {
     document.getElementById("search-summary").textContent = `Search failed: ${error.message}`;
   }
@@ -205,7 +214,16 @@ function renderStats() {
 function renderDeals() {
   document.getElementById("deals").innerHTML = state.deals.length
     ? state.deals.map(card).join("")
-    : `<p class="meta">No clean listings are above the deal threshold yet.</p>`;
+    : `<p class="empty-state">No listings are above the deal threshold yet. Latest listings are still shown above so the dashboard does not go blank.</p>`;
+}
+
+function renderLatestListings() {
+  const priced = state.listings.filter((listing) => Number(listing.current_price || 0) >= 1);
+  const clean = priced.filter((listing) => !listing.classification.is_filtered);
+  const listings = (clean.length ? clean : priced).slice(0, 8);
+  document.getElementById("latest-listings").innerHTML = listings.length
+    ? listings.map(card).join("")
+    : `<p class="empty-state">No listings yet. Search from the bar above to pull Carousell results into the dashboard.</p>`;
 }
 
 function renderListings() {
@@ -219,10 +237,10 @@ function renderListings() {
 }
 
 function renderSearch() {
-  const results = applyPriceFilters(state.searchResults.filter((listing) => !listing.classification.is_filtered), "search");
+  const results = applyPriceFilters(state.searchResults, "search");
   document.getElementById("search-results").innerHTML = results.length
     ? results.map(card).join("")
-    : `<p class="empty-state">No clean listings in this price range. Try raising the max, lowering the min, or searching a more specific phrase.</p>`;
+    : `<p class="empty-state">No visible listings in this price range. Try raising the max, lowering the min, or searching a more specific phrase.</p>`;
   document.getElementById("search-history").innerHTML = state.searches.length
     ? state.searches
         .slice(0, 8)

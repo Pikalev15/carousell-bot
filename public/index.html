@@ -25,14 +25,22 @@
         <section id="dashboard" class="view active">
           <div class="toolbar">
             <div>
-              <p class="eyebrow">Deal detection</p>
-              <h2>Today</h2>
+              <p class="eyebrow">Market scan</p>
+              <h2>Dashboard</h2>
             </div>
             <button id="refresh">Refresh</button>
           </div>
+          <form id="dashboard-search-form" class="command-bar">
+            <input id="dashboard-query" placeholder="Search Carousell from here..." aria-label="Dashboard search">
+            <button type="submit">Search web</button>
+          </form>
           <div id="stats" class="stats"></div>
           <div>
-            <h3>Live Deals</h3>
+            <h3>Latest Listings</h3>
+            <div id="latest-listings" class="grid"></div>
+          </div>
+          <div>
+            <h3>Deal Candidates</h3>
             <div id="deals" class="grid"></div>
           </div>
         </section>
@@ -64,8 +72,8 @@
               <h2>Listings</h2>
             </div>
             <select id="listing-filter">
-              <option value="clean" selected>Clean WTS</option>
-              <option value="all">All visible</option>
+              <option value="all" selected>All visible</option>
+              <option value="clean">Clean WTS</option>
               <option value="filtered">Filtered</option>
             </select>
           </div>
