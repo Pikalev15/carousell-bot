@@ -46,6 +46,7 @@ async function handleApi(request, response, url) {
       minPrice: url.searchParams.get("min_price"),
       maxPrice: url.searchParams.get("max_price"),
       maxAgeHours: url.searchParams.get("max_age_hours"),
+      location: url.searchParams.get("location"),
       includeFiltered: url.searchParams.get("include_filtered") === "true"
     });
     sendJson(response, 200, listings);
@@ -120,6 +121,7 @@ async function handleApi(request, response, url) {
         minPrice: body.min_price ?? 1,
         maxPrice: body.max_price,
         maxAgeHours: body.max_age_hours,
+        location: body.location,
         includeFiltered: Boolean(body.include_filtered)
       }),
       history: await readJson("searches")
@@ -271,6 +273,7 @@ function buildListings(state, query = "", options = {}) {
   const minPrice = options.minPrice === null || options.minPrice === undefined || options.minPrice === "" ? null : Number(options.minPrice);
   const maxPrice = options.maxPrice === null || options.maxPrice === undefined || options.maxPrice === "" ? null : Number(options.maxPrice);
   const maxAgeHours = options.maxAgeHours === null || options.maxAgeHours === undefined || options.maxAgeHours === "" ? null : Number(options.maxAgeHours);
+  const locationNeedle = String(options.location || "").trim().toLowerCase();
   const labelsByListing = new Map((state.labels || []).map((label) => [Number(label.listing_id), label]));
   return state.listings
     .filter((listing) => {
@@ -296,6 +299,7 @@ function buildListings(state, query = "", options = {}) {
       if (minPrice !== null && Number(listing.current_price || 0) < minPrice) return false;
       if (maxPrice !== null && Number(listing.current_price || 0) > maxPrice) return false;
       if (maxAgeHours !== null && getListingAgeHours(listing) > maxAgeHours) return false;
+      if (locationNeedle && !String(listing.location || "").toLowerCase().includes(locationNeedle)) return false;
       return true;
     });
 }

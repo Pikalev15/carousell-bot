@@ -46,10 +46,12 @@ document.getElementById("dashboard-search-form").addEventListener("submit", asyn
 document.getElementById("listing-filter").addEventListener("change", renderListings);
 document.getElementById("listing-min-price").addEventListener("input", renderListings);
 document.getElementById("listing-max-price").addEventListener("input", renderListings);
+document.getElementById("listing-location").addEventListener("input", renderListings);
 document.getElementById("listing-recent-filter").addEventListener("change", renderListings);
 document.getElementById("clear-price-filters").addEventListener("click", () => {
   document.getElementById("listing-min-price").value = "1";
   document.getElementById("listing-max-price").value = "";
+  document.getElementById("listing-location").value = "";
   document.getElementById("listing-recent-filter").value = "";
   renderListings();
 });
@@ -69,6 +71,7 @@ document.getElementById("search-form").addEventListener("submit", async (event) 
 });
 document.getElementById("search-min-price").addEventListener("input", renderSearch);
 document.getElementById("search-max-price").addEventListener("input", renderSearch);
+document.getElementById("search-location").addEventListener("input", renderSearch);
 document.getElementById("search-recent-filter").addEventListener("change", renderSearch);
 
 document.getElementById("search-more").addEventListener("click", async () => {
@@ -186,6 +189,7 @@ async function runSearch(mode) {
       mode,
       min_price: getNumberValue("search-min-price", 1),
       max_price: getNumberValue("search-max-price", null),
+      location: document.getElementById("search-location").value.trim(),
       max_age_hours: getNumberValue("search-recent-filter", null),
       include_filtered: true
     });
@@ -358,6 +362,7 @@ function openDetails(listing) {
     <div class="detail-grid">
       <p><strong>Price</strong><span>${formatMoney(listing.current_price)}</span></p>
       <p><strong>Seller</strong><span>${sellerMarkup(listing)} (${listing.seller_rating} stars)</span></p>
+      <p><strong>Location</strong><span>${escapeHtml(listing.location || "Not captured yet")}</span></p>
       <p><strong>Condition</strong><span>${escapeHtml(listing.condition)}</span></p>
       <p><strong>Classification</strong><span>${escapeHtml(listing.classification.post_type)}</span></p>
       <p class="description-row"><strong>Description</strong><span>${escapeHtml(listing.description || "No description captured yet. Search this listing again to refresh details.")}</span></p>
@@ -374,14 +379,17 @@ function matchesQuery(listing, query) {
 function applyPriceFilters(listings, scope) {
   const minId = scope === "search" ? "search-min-price" : "listing-min-price";
   const maxId = scope === "search" ? "search-max-price" : "listing-max-price";
+  const locationId = scope === "search" ? "search-location" : "listing-location";
   const recentId = scope === "search" ? "search-recent-filter" : "listing-recent-filter";
   const min = getNumberValue(minId, 1);
   const max = getNumberValue(maxId, null);
+  const location = document.getElementById(locationId).value.trim().toLowerCase();
   const maxAgeHours = getNumberValue(recentId, null);
   return listings.filter((listing) => {
     const price = Number(listing.current_price || 0);
     if (min !== null && price < min) return false;
     if (max !== null && price > max) return false;
+    if (location && !String(listing.location || "").toLowerCase().includes(location)) return false;
     if (maxAgeHours !== null && getListingAgeHours(listing) > maxAgeHours) return false;
     return true;
   });

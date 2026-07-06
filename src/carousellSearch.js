@@ -40,12 +40,14 @@ export async function refreshCarousellListingDetails(listing) {
     const details = await readDetailPage(page);
     const seller = extractSellerFromDetails(details, listing.seller_name);
     const description = extractDescription(details.bodyText, details.metaDescription, listing.title);
+    const location = extractLocation(details.bodyText, details.jsonLd, description);
     const detailPrice = extractRealPriceFromDescription(`${description}\n${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`);
     return {
       description,
       seller_name: seller.name || listing.seller_name,
       seller_id: seller.id || listing.seller_id,
       seller_url: seller.url || listing.seller_url || "",
+      location: location || listing.location || "Carousell SG",
       current_price: detailPrice || listing.current_price,
       price_source: detailPrice && detailPrice !== listing.current_price ? "description" : listing.price_source || "card",
       scraped_at: new Date().toISOString()
@@ -139,6 +141,7 @@ function collectListingObjects(value, found, query) {
       price: parsePrice(priceValue),
       sellerName: firstString(value.sellerName, value.seller_name, value.username, value.ownerName),
       sellerId: firstString(value.sellerId, value.seller_id, value.ownerId, value.userId),
+      location: extractStructuredLocation(value),
       url,
       query,
       imageUrls: collectImageUrls(value)
@@ -175,6 +178,7 @@ function normalizeListing(input) {
   const detailPrice = isPlaceholderPrice(cardPrice) ? extractRealPriceFromDescription(input.description || "") : 0;
   const price = detailPrice || cardPrice;
   const listedAgeMinutes = input.listedAgeMinutes ?? parsedCard.listedAgeMinutes ?? null;
+  const location = cleanLocation(input.location || extractLocation(input.description || cardText, "", input.description || ""));
 
   const carousellId = input.id || url.match(/\/p\/[^/]+-(\d+)/)?.[1] || stableId(`${title}-${url}`);
   return {
@@ -187,7 +191,7 @@ function normalizeListing(input) {
     seller_name: input.sellerName || parsedCard.sellerName || "Carousell seller",
     seller_url: input.sellerUrl || "",
     seller_rating: 0,
-    location: "Carousell SG",
+    location: location || "Carousell SG",
     days_listed: listedAgeMinutes === null ? 0 : Math.max(0, Math.floor(listedAgeMinutes / 1440)),
     listed_age_minutes: listedAgeMinutes,
     listed_at: listedAgeMinutes === null ? null : new Date(Date.now() - listedAgeMinutes * 60 * 1000).toISOString(),
@@ -222,13 +226,15 @@ async function enrichListingDetails(page, listings, limit) {
       await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
       const details = await readDetailPage(page);
       const seller = extractSellerFromDetails(details, parsed.sellerName);
+      const description = extractDescription(details.bodyText, details.metaDescription, parsed.title);
       enriched.push({
         ...listing,
         ...parsed,
         sellerName: seller.name || parsed.sellerName,
         sellerId: seller.id || listing.sellerId,
         sellerUrl: seller.url,
-        description: extractDescription(details.bodyText, details.metaDescription, parsed.title),
+        description,
+        location: extractLocation(details.bodyText, details.jsonLd, description),
         price: extractRealPriceFromDescription(`${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`) || listing.price
       });
     } catch {
@@ -339,6 +345,64 @@ export function extractDescription(bodyText, metaDescription, title) {
   return meta && !meta.toLowerCase().includes("carousell") ? cleanDescriptionText(meta, title) : "";
 }
 
+export function extractLocation(bodyText = "", jsonText = "", description = "") {
+  const jsonLocation = extractLocationFromJson(jsonText);
+  if (jsonLocation) return jsonLocation;
+
+  const lines = String(bodyText || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const meetUpIndex = lines.findIndex((line) => /^(meet[-\s]?up|pickup|pick up|self collection)$/i.test(line));
+  if (meetUpIndex >= 0) {
+    const sectionLines = lines.slice(meetUpIndex + 1);
+    const stopIndex = sectionLines.findIndex((line) =>
+      /^(delivery|payment|faq|description|seller information|meet the seller|report listing|similar listings|deal method|returns and refunds)$/i.test(line)
+    );
+    const location = cleanLocation((stopIndex >= 0 ? sectionLines.slice(0, stopIndex) : sectionLines).join(" "));
+    if (location) return location;
+  }
+
+  return extractLocationFromText(`${description}\n${bodyText}`);
+}
+
+function extractLocationFromJson(jsonText) {
+  const text = String(jsonText || "");
+  const matches = [
+    text.match(/"addressLocality"\s*:\s*"([^"]+)"/i),
+    text.match(/"addressRegion"\s*:\s*"([^"]+)"/i),
+    text.match(/"location"\s*:\s*"([^"]+)"/i)
+  ];
+  return cleanLocation(matches.find(Boolean)?.[1] || "");
+}
+
+function extractLocationFromText(text) {
+  const source = String(text || "");
+  const patterns = [
+    /\b(?:self\s+collect|collect|collection|pickup|pick\s+up)\s+(?:at|near|around|from|in)?\s*([^.\n;]{3,90})/i,
+    /\b(?:meetup|meet-up|meet up)\s+(?:at|near|around|from|in)?\s*([^.\n;]{3,90})/i,
+    /\b(?:deal|dealing)\s+(?:at|near|around|from|in)\s+([^.\n;]{3,90})/i
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    const location = cleanLocation(match?.[1] || "");
+    if (location) return location;
+  }
+  return "";
+}
+
+function cleanLocation(value) {
+  const text = String(value || "")
+    .replace(/\b(?:can deliver|delivery|deliver to|can negotiate|negotiable|chat|dm|pm|read more)\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s:,-]+|[\s:,-]+$/g, "")
+    .trim();
+  if (!text || text.length < 3 || text.length > 90) return "";
+  if (/^(singapore|carousell sg|meet-up|delivery|payment|read more)$/i.test(text)) return "";
+  if (/^(my place|my convenience|my preferred station)$/i.test(text)) return "";
+  return text;
+}
+
 async function readDetailPage(page) {
   return page.evaluate(() => {
     const bodyText = document.body.innerText || "";
@@ -389,6 +453,8 @@ export function extractRealPriceFromDescription(description) {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (!match) continue;
+    const context = text.slice(Math.max(0, match.index - 40), match.index + match[0].length + 40);
+    if (/\b(?:deliver|delivery|shipping|courier|postage|additional|deposit|top up|top-up)\b/i.test(context)) continue;
     const price = Math.round(Number(match[1].replaceAll(",", "")));
     if (price > 1 && price < 100000) return price;
   }
@@ -448,6 +514,32 @@ function collectImageUrls(value) {
   };
   visit(value.images || value.photos || value.media);
   return [...new Set(urls)];
+}
+
+function extractStructuredLocation(value) {
+  const candidates = [
+    value.location,
+    value.locationName,
+    value.location_name,
+    value.meetupLocation,
+    value.meetup_location,
+    value.areaName,
+    value.area_name,
+    value.address
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string") {
+      const location = cleanLocation(candidate);
+      if (location) return location;
+    }
+    if (candidate && typeof candidate === "object") {
+      const location = cleanLocation(
+        firstString(candidate.name, candidate.address, candidate.formattedAddress, candidate.formatted_address, candidate.locationName, candidate.areaName)
+      );
+      if (location) return location;
+    }
+  }
+  return "";
 }
 
 function normalizeUrl(url) {
