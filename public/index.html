@@ -28,15 +28,29 @@
               <p class="eyebrow">Market scan</p>
               <h2>Dashboard</h2>
             </div>
-            <button id="refresh">Refresh</button>
+            <div class="toolbar-actions">
+              <button id="density-toggle" type="button" aria-pressed="false">Compact</button>
+              <button id="refresh">Refresh</button>
+            </div>
           </div>
           <form id="dashboard-search-form" class="command-bar">
             <input id="dashboard-query" placeholder="Search Carousell from here..." aria-label="Dashboard search">
             <button type="submit">Search web</button>
           </form>
           <div id="stats" class="stats"></div>
+          <div class="section-bar">
+            <div>
+              <h3>Latest Listings</h3>
+              <p class="section-caption">Fresh visible posts, sorted for fast triage.</p>
+            </div>
+            <select id="dashboard-sort" aria-label="Dashboard sort">
+              <option value="recent">Newest first</option>
+              <option value="score" selected>Best score</option>
+              <option value="price_low">Lowest price</option>
+              <option value="price_high">Highest price</option>
+            </select>
+          </div>
           <div>
-            <h3>Latest Listings</h3>
             <div id="latest-listings" class="grid"></div>
           </div>
           <div>
@@ -62,6 +76,12 @@
               <option value="1">Last hour</option>
               <option value="24">Today</option>
               <option value="168">This week</option>
+            </select>
+            <select id="search-sort" aria-label="Search result sort">
+              <option value="score" selected>Best score</option>
+              <option value="recent">Newest</option>
+              <option value="price_low">Lowest $</option>
+              <option value="price_high">Highest $</option>
             </select>
             <button type="submit">Search web</button>
             <button type="button" id="search-more">Search more</button>
@@ -94,6 +114,14 @@
                 <option value="1">Last hour</option>
                 <option value="24">Today</option>
                 <option value="168">This week</option>
+              </select>
+            </label>
+            <label>Sort
+              <select id="listing-sort">
+                <option value="score" selected>Best score</option>
+                <option value="recent">Newest</option>
+                <option value="price_low">Lowest price</option>
+                <option value="price_high">Highest price</option>
               </select>
             </label>
             <button id="clear-price-filters">Clear</button>
@@ -136,6 +164,7 @@
       </div>
       <div id="details-body"></div>
     </dialog>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <script src="/app.js"></script>
   </body>
 </html>

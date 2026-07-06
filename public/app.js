@@ -8,7 +8,8 @@ const state = {
   stats: {},
   trainingModel: {},
   searchResults: [],
-  lastQuery: ""
+  lastQuery: "",
+  density: localStorage.getItem("density") || "comfortable"
 };
 
 const api = {
@@ -34,7 +35,20 @@ document.querySelectorAll(".nav-button").forEach((button) => {
   button.addEventListener("click", () => showView(button.dataset.view));
 });
 
-document.getElementById("refresh").addEventListener("click", load);
+document.getElementById("refresh").addEventListener("click", async (event) => {
+  setButtonBusy(event.currentTarget, "Refreshing");
+  await load();
+  event.currentTarget.removeAttribute("aria-busy");
+  event.currentTarget.textContent = "Refresh";
+  showToast("Dashboard updated");
+});
+document.getElementById("density-toggle").addEventListener("click", () => {
+  state.density = state.density === "compact" ? "comfortable" : "compact";
+  localStorage.setItem("density", state.density);
+  applyDensity();
+  renderAll();
+});
+document.getElementById("dashboard-sort").addEventListener("change", renderLatestListings);
 document.getElementById("dashboard-search-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const query = document.getElementById("dashboard-query").value.trim();
@@ -48,6 +62,7 @@ document.getElementById("listing-min-price").addEventListener("input", renderLis
 document.getElementById("listing-max-price").addEventListener("input", renderListings);
 document.getElementById("listing-location").addEventListener("input", renderListings);
 document.getElementById("listing-recent-filter").addEventListener("change", renderListings);
+document.getElementById("listing-sort").addEventListener("change", renderListings);
 document.getElementById("clear-price-filters").addEventListener("click", () => {
   document.getElementById("listing-min-price").value = "1";
   document.getElementById("listing-max-price").value = "";
@@ -73,6 +88,7 @@ document.getElementById("search-min-price").addEventListener("input", renderSear
 document.getElementById("search-max-price").addEventListener("input", renderSearch);
 document.getElementById("search-location").addEventListener("input", renderSearch);
 document.getElementById("search-recent-filter").addEventListener("change", renderSearch);
+document.getElementById("search-sort").addEventListener("change", renderSearch);
 
 document.getElementById("search-more").addEventListener("click", async () => {
   await runSearch("more");
@@ -105,15 +121,18 @@ document.addEventListener("click", async (event) => {
   }
 
   if (button.dataset.label) {
+    setButtonBusy(button, "Saving");
     await api.post("/api/feedback/label", {
       listing_id: Number(button.dataset.listingId),
       rating: button.dataset.label,
       asked_price: Number(button.dataset.price)
     });
     await load();
+    showToast(`Marked as ${button.dataset.label.replace("_", " ")}`);
   }
 
   if (button.dataset.msrp) {
+    setButtonBusy(button, "Checking");
     const result = await api.post("/api/msrp/lookup", {
       title: button.dataset.title,
       price: Number(button.dataset.price)
@@ -121,6 +140,8 @@ document.addEventListener("click", async (event) => {
     document.querySelectorAll(`[data-msrp-result="${button.dataset.msrp}"]`).forEach((target) => {
       target.textContent = `MSRP ${formatMoney(result.msrp)} | ${result.discount_percent}% off | ${result.source}`;
     });
+    button.removeAttribute("aria-busy");
+    button.textContent = "MSRP";
   }
 
   if (button.dataset.viewListing) {
@@ -129,10 +150,11 @@ document.addEventListener("click", async (event) => {
   }
 
   if (button.dataset.refreshDetails) {
-    button.textContent = "Refreshing...";
+    setButtonBusy(button, "Refreshing");
     const listing = await api.post(`/api/listings/${button.dataset.refreshDetails}/refresh-details`, {});
     await load();
     openDetails(listing);
+    showToast("Listing details refreshed");
   }
 
   if (button.dataset.openUrl) {
@@ -146,6 +168,7 @@ document.addEventListener("click", async (event) => {
 });
 
 async function load() {
+  document.body.classList.add("is-loading");
   try {
     const [listings, deals, filters, sellers, stats, labels, searches, trainingModel] = await Promise.all([
       api.get("/api/listings?include_filtered=true"),
@@ -164,6 +187,8 @@ async function load() {
     renderAll();
   } catch (error) {
     document.getElementById("search-summary").textContent = `Could not reach the local server: ${error.message}`;
+  } finally {
+    document.body.classList.remove("is-loading");
   }
 }
 
@@ -182,6 +207,8 @@ async function runSearch(mode) {
   const input = document.getElementById("search-input");
   const query = input.value.trim() || state.lastQuery;
   if (!query) return;
+  const submit = mode === "more" ? document.getElementById("search-more") : document.querySelector("#search-form button[type='submit']");
+  setButtonBusy(submit, mode === "more" ? "Searching more" : "Searching");
   document.getElementById("search-summary").textContent = mode === "more" ? "Searching Carousell for more results..." : "Searching Carousell...";
   try {
     const payload = await api.post("/api/search", {
@@ -203,14 +230,19 @@ async function runSearch(mode) {
     const added = payload.added ? ` Added ${payload.added} new listings.` : "";
     const warning = payload.warning ? ` ${payload.warning}` : "";
     document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}" via ${source}.${added}${warning}`;
+    showToast(payload.added ? `Added ${payload.added} new listings` : "Search complete");
   } catch (error) {
     document.getElementById("search-summary").textContent = `Search failed: ${error.message}`;
+  } finally {
+    submit.removeAttribute("aria-busy");
+    submit.textContent = mode === "more" ? "Search more" : "Search web";
   }
 }
 
 function showView(view) {
   document.querySelectorAll(".nav-button").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
   document.querySelectorAll(".view").forEach((item) => item.classList.toggle("active", item.id === view));
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function renderStats() {
@@ -228,14 +260,14 @@ function renderStats() {
 
 function renderDeals() {
   document.getElementById("deals").innerHTML = state.deals.length
-    ? state.deals.map(card).join("")
+    ? sortListings(state.deals, "score").map(card).join("")
     : `<p class="empty-state">No listings are above the deal threshold yet. Latest listings are still shown above so the dashboard does not go blank.</p>`;
 }
 
 function renderLatestListings() {
   const priced = state.listings.filter((listing) => Number(listing.current_price || 0) >= 1);
   const clean = priced.filter((listing) => !listing.classification.is_filtered);
-  const listings = (clean.length ? clean : priced).slice(0, 8);
+  const listings = sortListings(clean.length ? clean : priced, document.getElementById("dashboard-sort").value).slice(0, state.density === "compact" ? 12 : 8);
   document.getElementById("latest-listings").innerHTML = listings.length
     ? listings.map(card).join("")
     : `<p class="empty-state">No listings yet. Search from the bar above to pull Carousell results into the dashboard.</p>`;
@@ -248,11 +280,11 @@ function renderListings() {
     if (filter === "filtered") return listing.classification.is_filtered;
     return true;
   });
-  document.getElementById("listing-list").innerHTML = listings.map(card).join("");
+  document.getElementById("listing-list").innerHTML = sortListings(listings, document.getElementById("listing-sort").value).map(card).join("");
 }
 
 function renderSearch() {
-  const results = applyPriceFilters(state.searchResults, "search");
+  const results = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
   document.getElementById("search-results").innerHTML = results.length
     ? results.map(card).join("")
     : `<p class="empty-state">No visible listings in this price range. Try raising the max, lowering the min, or searching a more specific phrase.</p>`;
@@ -336,7 +368,7 @@ function card(listing) {
       : "";
 
   return `
-    <article class="card">
+    <article class="card" style="--entry-index: ${Number(listing.id || 0) % 12}">
       <div class="card-header">
         <div class="listing-main">
           <p class="title">${escapeHtml(listing.title)}</p>
@@ -433,6 +465,39 @@ function displayLocation(listing) {
   return escapeHtml(location && !/^carousell sg$/i.test(location) ? location : "Location not listed");
 }
 
+function sortListings(listings, mode) {
+  return [...listings].sort((a, b) => {
+    if (mode === "price_low") return Number(a.current_price || 0) - Number(b.current_price || 0);
+    if (mode === "price_high") return Number(b.current_price || 0) - Number(a.current_price || 0);
+    if (mode === "recent") return getListingAgeHours(a) - getListingAgeHours(b);
+    return Number(b.score?.deal_score || 0) - Number(a.score?.deal_score || 0);
+  });
+}
+
+function applyDensity() {
+  const compact = state.density === "compact";
+  document.body.classList.toggle("compact-density", compact);
+  const toggle = document.getElementById("density-toggle");
+  toggle.textContent = compact ? "Comfortable" : "Compact";
+  toggle.setAttribute("aria-pressed", String(compact));
+}
+
+function setButtonBusy(button, text) {
+  if (!button) return;
+  button.dataset.idleText = button.dataset.idleText || button.textContent;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = text;
+}
+
+let toastTimer;
+function showToast(message) {
+  const toast = document.getElementById("toast");
+  toast.textContent = message;
+  toast.classList.add("visible");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove("visible"), 2200);
+}
+
 function formatAge(listing) {
   const hours = getListingAgeHours(listing);
   if (hours < 1) return `${Math.max(0, Math.round(hours * 60))} min`;
@@ -465,4 +530,5 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+applyDensity();
 load();

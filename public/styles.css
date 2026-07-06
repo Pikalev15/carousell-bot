@@ -21,6 +21,7 @@
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.28);
   --shadow-soft: 0 10px 32px rgba(0, 0, 0, 0.18);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
 }
 
 * {
@@ -35,6 +36,10 @@ body {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 260px),
     var(--bg);
+}
+
+body.is-loading main {
+  cursor: progress;
 }
 
 a {
@@ -75,6 +80,26 @@ button:hover {
 
 button:active {
   transform: scale(0.97);
+}
+
+button[aria-busy="true"] {
+  pointer-events: none;
+  color: var(--muted);
+  border-color: var(--line);
+  background: #0d0f12;
+}
+
+button[aria-busy="true"]::after {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-left: 8px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  vertical-align: -0.12em;
+  animation: spin 760ms linear infinite;
+  content: "";
 }
 
 .app {
@@ -182,6 +207,7 @@ main {
 
 .view.active {
   display: block;
+  animation: viewIn 180ms var(--ease-out);
 }
 
 .toolbar {
@@ -192,11 +218,39 @@ main {
   margin-bottom: 22px;
 }
 
+.toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(5, minmax(120px, 1fr));
   gap: 12px;
   margin-bottom: 28px;
+}
+
+.section-bar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 24px 0 14px;
+}
+
+.section-bar h3 {
+  margin: 0 0 5px;
+}
+
+.section-caption {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.section-bar select {
+  width: min(180px, 100%);
 }
 
 .stat,
@@ -238,6 +292,8 @@ main {
     transform 160ms var(--ease-out),
     border-color 160ms var(--ease-out),
     background 160ms var(--ease-out);
+  animation: cardIn 240ms var(--ease-out) both;
+  animation-delay: calc(var(--entry-index, 0) * 18ms);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -412,7 +468,7 @@ main {
 
 .search-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) 96px 96px minmax(120px, 0.75fr) 128px auto auto;
+  grid-template-columns: minmax(220px, 1.4fr) 96px 96px minmax(120px, 0.75fr) 128px 126px auto auto;
   gap: 10px;
   margin-bottom: 12px;
   padding: 12px;
@@ -647,12 +703,96 @@ dialog::backdrop {
   background: rgba(255, 255, 255, 0.025);
 }
 
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 10;
+  max-width: min(360px, calc(100vw - 40px));
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 11px 13px;
+  color: var(--ink);
+  background: rgba(17, 19, 23, 0.96);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px) scale(0.98);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 180ms var(--ease-out);
+}
+
+.toast.visible {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.compact-density .grid {
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.compact-density .card {
+  min-height: 0;
+  gap: 10px;
+  padding: 14px;
+}
+
+.compact-density .price {
+  font-size: 28px;
+}
+
+.compact-density .score-strip span {
+  padding: 8px;
+}
+
+.compact-density .actions {
+  gap: 6px;
+}
+
+.compact-density .actions button {
+  min-width: 58px;
+  min-height: 32px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+@keyframes viewIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }
 
@@ -662,7 +802,7 @@ dialog::backdrop {
   }
 
   .search-row {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -716,8 +856,28 @@ dialog::backdrop {
     flex-direction: column;
   }
 
+  .toolbar-actions,
+  .section-bar {
+    width: 100%;
+  }
+
+  .section-bar {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .section-bar select,
+  .toolbar-actions button {
+    width: 100%;
+  }
+
   .grid {
     grid-template-columns: 1fr;
+  }
+
+  .toast {
+    right: 14px;
+    bottom: 14px;
   }
 
   .score-strip {
