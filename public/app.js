@@ -318,30 +318,47 @@ function card(listing) {
     ? `<span class="badge bad">${classification.post_type}</span>`
     : `<span class="badge good">Score ${listing.score.deal_score}</span>`;
   const score = listing.score
-    ? `<p class="meta">Deal ${listing.score.deal_score}/100 | price ${listing.score.price_score}/100 | preference ${listing.score.training_preference}/100</p>`
+    ? `
+      <div class="score-strip">
+        <span>Deal <strong>${listing.score.deal_score}</strong></span>
+        <span>Price <strong>${listing.score.price_score}</strong></span>
+        <span>Preference <strong>${listing.score.training_preference}</strong></span>
+      </div>
+    `
     : "";
   const reasons = classification.reasons.length
     ? `<ul class="reasons">${classification.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`
     : `<p class="meta">Clean WTS listing.</p>`;
   const labelBadge = label ? `<span class="badge info">${label.user_rating}</span>` : "";
+  const priceNote =
+    listing.price_source === "description"
+      ? `<p class="price-note">Price corrected from description. Card price was ${formatMoney(listing.display_price)}.</p>`
+      : "";
 
   return `
     <article class="card">
       <div class="card-header">
-        <div>
+        <div class="listing-main">
           <p class="title">${escapeHtml(listing.title)}</p>
-          <p class="meta">${sellerMarkup(listing)} | ${listing.seller_rating} stars | ${formatAge(listing)} | ${displayLocation(listing)}</p>
+          <p class="listing-meta">
+            <span>${sellerMarkup(listing)}</span>
+            <span>${listing.seller_rating} stars</span>
+            <span>${formatAge(listing)}</span>
+            <span>${displayLocation(listing)}</span>
+          </p>
         </div>
         <div class="badge-stack">${badge}${labelBadge}</div>
       </div>
-      <div class="price">${formatMoney(listing.current_price)}</div>
+      <div class="price-row">
+        <div class="price">${formatMoney(listing.current_price)}</div>
+      </div>
       ${score}
-      ${listing.price_source === "description" ? `<p class="meta">Price corrected from description. Card price was ${formatMoney(listing.display_price)}.</p>` : ""}
+      ${priceNote}
       ${reasons}
       <p class="meta" data-msrp-result="${listing.id}"></p>
       <div class="actions">
-        <button data-view-listing="${listing.id}">View</button>
-        <button data-refresh-details="${listing.id}">Refresh details</button>
+        <button class="primary-action" data-view-listing="${listing.id}">View</button>
+        <button data-refresh-details="${listing.id}">Refresh</button>
         <button data-open-url="${escapeHtml(listing.carousell_url)}">Open</button>
         <button data-label="good" data-listing-id="${listing.id}" data-price="${listing.current_price}">Good</button>
         <button data-label="skip" data-listing-id="${listing.id}" data-price="${listing.current_price}">Skip</button>
