@@ -125,6 +125,13 @@ document.addEventListener("click", async (event) => {
     openDetails(listing);
   }
 
+  if (button.dataset.refreshDetails) {
+    button.textContent = "Refreshing...";
+    const listing = await api.post(`/api/listings/${button.dataset.refreshDetails}/refresh-details`, {});
+    await load();
+    openDetails(listing);
+  }
+
   if (button.dataset.openUrl) {
     window.open(button.dataset.openUrl, "_blank", "noopener");
   }
@@ -330,6 +337,7 @@ function card(listing) {
       <p class="meta" data-msrp-result="${listing.id}"></p>
       <div class="actions">
         <button data-view-listing="${listing.id}">View</button>
+        <button data-refresh-details="${listing.id}">Refresh details</button>
         <button data-open-url="${escapeHtml(listing.carousell_url)}">Open</button>
         <button data-label="good" data-listing-id="${listing.id}" data-price="${listing.current_price}">Good</button>
         <button data-label="skip" data-listing-id="${listing.id}" data-price="${listing.current_price}">Skip</button>

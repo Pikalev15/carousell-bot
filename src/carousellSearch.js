@@ -29,31 +29,36 @@ export async function searchCarousell(query, options = {}) {
   };
 }
 
+export async function refreshCarousellListingDetails(listing) {
+  const url = normalizeUrl(listing.carousell_url || listing.url);
+  if (!url) throw new Error("listing has no Carousell URL");
+
+  const { page, browser } = await newBrowserPage();
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+    const details = await readDetailPage(page);
+    const seller = extractSellerFromDetails(details, listing.seller_name);
+    const description = extractDescription(details.bodyText, details.metaDescription, listing.title);
+    const detailPrice = extractRealPriceFromDescription(`${description}\n${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`);
+    return {
+      description,
+      seller_name: seller.name || listing.seller_name,
+      seller_id: seller.id || listing.seller_id,
+      seller_url: seller.url || listing.seller_url || "",
+      current_price: detailPrice || listing.current_price,
+      price_source: detailPrice && detailPrice !== listing.current_price ? "description" : listing.price_source || "card",
+      scraped_at: new Date().toISOString()
+    };
+  } finally {
+    await browser.close();
+  }
+}
+
 async function fetchWithBrowser(url, options = {}) {
-  let chromium;
-  try {
-    ({ chromium } = await import("playwright-core"));
-  } catch {
-    throw new Error("playwright-core is not installed. Run npm.cmd install.");
-  }
-
-  const executablePath = options.executablePath || (await findChromePath());
-  if (!executablePath) {
-    throw new Error("Chrome or Edge was not found on this PC.");
-  }
-
-  const browser = await chromium.launch({
-    executablePath,
-    headless: true,
-    args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-  });
+  const { page, browser } = await newBrowserPage(options);
 
   try {
-    const page = await browser.newPage({
-      locale: "en-SG",
-      timezoneId: "Asia/Singapore",
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
-    });
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
     await page.waitForSelector('a[href*="/p/"], script#__NEXT_DATA__', { timeout: 20000 }).catch(() => {});
@@ -215,18 +220,7 @@ async function enrichListingDetails(page, listings, limit) {
     try {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
-      const details = await page.evaluate(() => {
-        const bodyText = document.body.innerText || "";
-        const metaDescription = document.querySelector('meta[name="description"]')?.content || "";
-        const jsonLd = [...document.querySelectorAll('script[type="application/ld+json"]')]
-          .map((script) => script.textContent || "")
-          .join("\n");
-        const profileLinks = [...document.querySelectorAll('a[href^="/u/"], a[href*="/u/"]')].map((anchor) => ({
-          text: anchor.textContent?.trim() || "",
-          href: anchor.href || ""
-        }));
-        return { bodyText, metaDescription, jsonLd, profileLinks };
-      });
+      const details = await readDetailPage(page);
       const seller = extractSellerFromDetails(details, parsed.sellerName);
       enriched.push({
         ...listing,
@@ -316,11 +310,21 @@ function parseListedAgeMinutes(value) {
   return null;
 }
 
-function extractDescription(bodyText, metaDescription, title) {
+export function extractDescription(bodyText, metaDescription, title) {
   const lines = String(bodyText || "")
     .split(/\n+/)
     .map((line) => line.trim())
     .filter(Boolean);
+  const descriptionIndex = lines.findIndex((line) => /^description$/i.test(line));
+  if (descriptionIndex >= 0) {
+    const sectionLines = lines.slice(descriptionIndex + 1);
+    const stopIndex = sectionLines.findIndex((line) =>
+      /^(meet-up|delivery|payment|seller information|report listing|similar listings|deal method|posted in|description)$/i.test(line)
+    );
+    const description = cleanDescriptionText((stopIndex >= 0 ? sectionLines.slice(0, stopIndex) : sectionLines).join("\n"), title);
+    if (description) return description;
+  }
+
   const titleIndex = lines.findIndex((line) => title && line.toLowerCase() === title.toLowerCase());
   const afterTitle = titleIndex >= 0 ? lines.slice(titleIndex + 1) : lines;
   const stopIndex = afterTitle.findIndex((line) => /^(meet-up|delivery|payment|seller information|report listing|similar listings)$/i.test(line));
@@ -333,6 +337,47 @@ function extractDescription(bodyText, metaDescription, title) {
 
   const meta = String(metaDescription || "").trim();
   return meta && !meta.toLowerCase().includes("carousell") ? cleanDescriptionText(meta, title) : "";
+}
+
+async function readDetailPage(page) {
+  return page.evaluate(() => {
+    const bodyText = document.body.innerText || "";
+    const metaDescription = document.querySelector('meta[name="description"]')?.content || "";
+    const jsonLd = [...document.querySelectorAll('script[type="application/ld+json"]')]
+      .map((script) => script.textContent || "")
+      .join("\n");
+    const profileLinks = [...document.querySelectorAll('a[href^="/u/"], a[href*="/u/"]')].map((anchor) => ({
+      text: anchor.textContent?.trim() || "",
+      href: anchor.href || ""
+    }));
+    return { bodyText, metaDescription, jsonLd, profileLinks };
+  });
+}
+
+async function newBrowserPage(options = {}) {
+  let chromium;
+  try {
+    ({ chromium } = await import("playwright-core"));
+  } catch {
+    throw new Error("playwright-core is not installed. Run npm.cmd install.");
+  }
+
+  const executablePath = options.executablePath || (await findChromePath());
+  if (!executablePath) {
+    throw new Error("Chrome or Edge was not found on this PC.");
+  }
+
+  const browser = await chromium.launch({
+    executablePath,
+    headless: true,
+    args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+  });
+  const page = await browser.newPage({
+    locale: "en-SG",
+    timezoneId: "Asia/Singapore",
+    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+  });
+  return { browser, page };
 }
 
 export function extractRealPriceFromDescription(description) {

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyListing, scoreDeal } from "./filterEngine.js";
-import { searchCarousell } from "./carousellSearch.js";
+import { refreshCarousellListingDetails, searchCarousell } from "./carousellSearch.js";
 import { getState, readJson, writeJson } from "./store.js";
 import { labelPolarity, predictPreference, trainModel } from "./trainingModel.js";
 
@@ -60,6 +60,28 @@ async function handleApi(request, response, url) {
       sendJson(response, 404, { error: "Listing not found" });
       return;
     }
+    sendJson(response, 200, listing);
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname.match(/^\/api\/listings\/\d+\/refresh-details$/)) {
+    const id = Number(url.pathname.split("/")[3]);
+    const listings = await readJson("listings");
+    const index = listings.findIndex((item) => Number(item.id) === id);
+    if (index < 0) {
+      sendJson(response, 404, { error: "Listing not found" });
+      return;
+    }
+
+    const refreshed = await refreshCarousellListingDetails(listings[index]);
+    listings[index] = {
+      ...listings[index],
+      ...refreshed
+    };
+    await writeJson("listings", listings);
+
+    const state = await getState();
+    const listing = buildListings(state, "", { includeFiltered: true }).find((item) => item.id === id);
     sendJson(response, 200, listing);
     return;
   }
