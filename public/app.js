@@ -138,7 +138,8 @@ document.addEventListener("click", async (event) => {
       price: Number(button.dataset.price)
     });
     document.querySelectorAll(`[data-msrp-result="${button.dataset.msrp}"]`).forEach((target) => {
-      target.textContent = `MSRP ${formatMoney(result.msrp)} | ${result.discount_percent}% off | ${result.source}`;
+      const evidence = result.evidence ? ` | ${result.evidence.slice(0, 120)}` : "";
+      target.textContent = `MSRP ${formatMoney(result.msrp)} (${result.currency || "SGD"}) | ${result.discount_percent}% off | ${result.source}${evidence}`;
     });
     button.removeAttribute("aria-busy");
     button.textContent = "MSRP";
@@ -228,9 +229,10 @@ async function runSearch(mode) {
     document.getElementById("search-input").value = query;
     const source = payload.source === "carousell-web" ? "Carousell web" : payload.source;
     const added = payload.added ? ` Added ${payload.added} new listings.` : "";
+    const updated = payload.updated ? ` Updated ${payload.updated} existing listings with full details.` : "";
     const warning = payload.warning ? ` ${payload.warning}` : "";
-    document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}" via ${source}.${added}${warning}`;
-    showToast(payload.added ? `Added ${payload.added} new listings` : "Search complete");
+    document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}" via ${source}.${added}${updated}${warning}`;
+    showToast(payload.added || payload.updated ? `Added ${payload.added || 0}, updated ${payload.updated || 0}` : "Search complete");
   } catch (error) {
     document.getElementById("search-summary").textContent = `Search failed: ${error.message}`;
   } finally {
@@ -452,7 +454,7 @@ function getNumberValue(id, fallback) {
 }
 
 function formatMoney(value) {
-  return `$${Number(value || 0).toLocaleString()}`;
+  return `S$${Number(value || 0).toLocaleString()}`;
 }
 
 function sellerMarkup(listing) {

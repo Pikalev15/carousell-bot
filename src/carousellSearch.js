@@ -1,3 +1,5 @@
+import { parseMoney } from "./currency.js";
+
 const CAROUSELL_BASE_URL = "https://www.carousell.sg";
 const CHROME_PATHS = [
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
@@ -85,7 +87,7 @@ async function fetchWithBrowser(url, options = {}) {
         };
       });
     });
-    domListings = await enrichListingDetails(page, domListings, options.limit || 24);
+    domListings = await enrichListingDetails(browser, domListings, options.limit || 24, options);
     return {
       html: await page.content(),
       domListings
@@ -205,46 +207,61 @@ function normalizeListing(input) {
   };
 }
 
-async function enrichListingDetails(page, listings, limit) {
-  const enriched = [];
+async function enrichListingDetails(browser, listings, limit, options = {}) {
   const seen = new Set();
-  const candidates = listings.slice(0, Math.max(limit, 12));
+  const candidates = listings
+    .slice(0, limit)
+    .filter((listing) => {
+      if (!listing.url || seen.has(listing.url)) return false;
+      seen.add(listing.url);
+      return true;
+    });
+  const concurrency = Math.max(1, Math.min(4, Number(options.detailConcurrency || 4)));
+  const enriched = new Array(candidates.length);
+  let cursor = 0;
 
-  for (const listing of candidates) {
-    const url = listing.url;
-    if (!url || seen.has(url)) continue;
-    seen.add(url);
-
-    const parsed = parseCardText(listing.cardText || "");
-    const needsDetail = isPlaceholderPrice(parsePrice(listing.price || listing.cardText)) || enriched.length < 8;
-    if (!needsDetail) {
-      enriched.push({ ...listing, ...parsed });
-      continue;
-    }
-
-    try {
-      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
-      await expandDetailSections(page);
-      const details = await readDetailPage(page);
-      const seller = extractSellerFromDetails(details, parsed.sellerName);
-      const description = extractDescription(details.bodyText, details.metaDescription, parsed.title);
-      enriched.push({
-        ...listing,
-        ...parsed,
-        sellerName: seller.name || parsed.sellerName,
-        sellerId: seller.id || listing.sellerId,
-        sellerUrl: seller.url,
-        description,
-        location: extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks),
-        price: extractRealPriceFromDescription(`${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`) || listing.price
-      });
-    } catch {
-      enriched.push({ ...listing, ...parsed });
+  async function worker() {
+    while (cursor < candidates.length) {
+      const index = cursor;
+      cursor += 1;
+      enriched[index] = await hydrateListingDetail(browser, candidates[index]);
     }
   }
 
-  return enriched;
+  await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, worker));
+  return enriched.filter(Boolean);
+}
+
+async function hydrateListingDetail(browser, listing) {
+  const parsed = parseCardText(listing.cardText || "");
+  let page;
+  try {
+    page = await browser.newPage({
+      locale: "en-SG",
+      timezoneId: "Asia/Singapore",
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+    });
+    await page.goto(listing.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForLoadState("networkidle", { timeout: 9000 }).catch(() => {});
+    await expandDetailSections(page);
+    const details = await readDetailPage(page);
+    const seller = extractSellerFromDetails(details, parsed.sellerName);
+    const description = extractDescription(details.bodyText, details.metaDescription, parsed.title);
+    return {
+      ...listing,
+      ...parsed,
+      sellerName: seller.name || parsed.sellerName,
+      sellerId: seller.id || listing.sellerId,
+      sellerUrl: seller.url,
+      description,
+      location: extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks),
+      price: extractRealPriceFromDescription(`${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`) || listing.price
+    };
+  } catch {
+    return { ...listing, ...parsed };
+  } finally {
+    await page?.close().catch(() => {});
+  }
 }
 
 function extractSellerFromDetails(details, fallbackName = "") {
@@ -491,15 +508,16 @@ async function newBrowserPage(options = {}) {
 export function extractRealPriceFromDescription(description) {
   const text = String(description || "");
   const patterns = [
-    /(?:real|actual|selling|letting go|take|deal|price|asking|each|all for)\s*(?:price)?\s*(?:is|at|:|-)?\s*(?:S\$|\$|SGD)\s?([\d,]+(?:\.\d+)?)/i,
-    /(?:S\$|\$|SGD)\s?([\d,]+(?:\.\d+)?)\s*(?:firm|fixed|nett|each|for all|only)?/i
+    /(?:real|actual|selling|letting go|take|deal|price|asking|each|all for)\s*(?:price)?\s*(?:is|at|:|-)?\s*(?:S\$|SGD|US\$|USD|\$)\s?([\d,]+(?:\.\d+)?)/i,
+    /(?:S\$|SGD|US\$|USD|\$)\s?([\d,]+(?:\.\d+)?)\s*(?:firm|fixed|nett|each|for all|only)?/i
   ];
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (!match) continue;
     const context = text.slice(Math.max(0, match.index - 40), match.index + match[0].length + 40);
     if (/\b(?:deliver|delivery|shipping|courier|postage|additional|deposit|top up|top-up)\b/i.test(context)) continue;
-    const price = Math.round(Number(match[1].replaceAll(",", "")));
+    const money = parseMoney(match[0], { defaultCurrency: /\b(?:usd|us\$)\b/i.test(context) ? "USD" : "SGD" });
+    const price = money.sgd || Math.round(Number(match[1].replaceAll(",", "")));
     if (price > 1 && price < 100000) return price;
   }
   return 0;
@@ -596,8 +614,7 @@ function normalizeUrl(url) {
 function parsePrice(value) {
   if (typeof value === "number") return Math.round(value);
   if (!value) return 0;
-  const match = String(value).match(/(?:S\$|\$|SGD)\s?([\d,]+(?:\.\d+)?)/i);
-  return match ? Math.round(Number(match[1].replaceAll(",", ""))) : 0;
+  return parseMoney(value).sgd;
 }
 
 function firstString(...values) {

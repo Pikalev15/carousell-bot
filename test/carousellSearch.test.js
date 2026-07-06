@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { extractDescription, extractLocation, extractRealPriceFromDescription, parseCardText } from "../src/carousellSearch.js";
+import { parseMoney } from "../src/currency.js";
+import { estimateMsrp } from "../src/msrpSearch.js";
 
 test("parses seller, age, title, condition from search card text", () => {
   const parsed = parseCardText(`
@@ -21,6 +23,12 @@ test("parses seller, age, title, condition from search card text", () => {
 test("extracts actual price from description when card price is placeholder", () => {
   assert.equal(extractRealPriceFromDescription("Placeholder price. Actual price is S$280 firm."), 280);
   assert.equal(extractRealPriceFromDescription("Take all for $45, pickup today."), 45);
+});
+
+test("converts USD prices to SGD", () => {
+  assert.equal(parseMoney("USD 100").sgd, 135);
+  assert.equal(parseMoney("US$200").sgd, 270);
+  assert.equal(extractRealPriceFromDescription("Actual price is USD 100 firm."), 135);
 });
 
 test("does not treat delivery fees or deposits as item prices", () => {
@@ -88,4 +96,13 @@ test("extracts location from seller-written description", () => {
   const description = "Self collect at 731690/Admiralty MRT. Can deliver to your place at my convenience for additional $5.";
 
   assert.equal(extractLocation("", "", description), "731690/Admiralty MRT");
+});
+
+test("estimates MSRP from Google search text and converts USD", () => {
+  const result = estimateMsrp("Official price US$100. Used listing $50 on Carousell.", [
+    { text: "Official store", href: "https://example.com/product" }
+  ]);
+
+  assert.equal(result.msrp, 135);
+  assert.equal(result.source, "https://example.com/product");
 });

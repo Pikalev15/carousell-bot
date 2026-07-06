@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyListing, scoreDeal } from "./filterEngine.js";
 import { extractLocation, refreshCarousellListingDetails, searchCarousell } from "./carousellSearch.js";
+import { lookupMsrpFromGoogle } from "./msrpSearch.js";
 import { getState, readJson, writeJson } from "./store.js";
 import { labelPolarity, predictPreference, trainModel } from "./trainingModel.js";
 
@@ -116,6 +117,7 @@ async function handleApi(request, response, url) {
       source: webSearch?.source || (mode === "more" ? "local-demo" : "local"),
       source_url: webSearch?.url || null,
       added: webSearch?.added || 0,
+      updated: webSearch?.updated || 0,
       warning: webSearch?.warning || null,
       results: buildListings(state, query, {
         minPrice: body.min_price ?? 1,
@@ -232,12 +234,19 @@ async function handleApi(request, response, url) {
     const body = await readBody(request);
     const title = String(body.title || "listing");
     const price = Number(body.price || 0);
-    const estimate = Math.max(price + 20, Math.round(price * deterministicMultiplier(title)));
+    const estimate = await lookupMsrpFromGoogle(title).catch((error) => ({
+      msrp: 0,
+      source: "Google search unavailable",
+      evidence: error.message,
+      currency: "SGD"
+    }));
     sendJson(response, 200, {
       title,
-      msrp: estimate,
-      discount_percent: estimate ? Math.round(((estimate - price) / estimate) * 100) : 0,
-      source: "Local test estimator"
+      msrp: estimate.msrp,
+      discount_percent: estimate.msrp ? Math.round(((estimate.msrp - price) / estimate.msrp) * 100) : 0,
+      source: estimate.source,
+      evidence: estimate.evidence,
+      currency: estimate.currency
     });
     return;
   }
@@ -275,6 +284,7 @@ function buildListings(state, query = "", options = {}) {
   const maxAgeHours = options.maxAgeHours === null || options.maxAgeHours === undefined || options.maxAgeHours === "" ? null : Number(options.maxAgeHours);
   const locationNeedle = String(options.location || "").trim().toLowerCase();
   const labelsByListing = new Map((state.labels || []).map((label) => [Number(label.listing_id), label]));
+  const marketMedians = calculateMarketMedians(state.listings || []);
   return state.listings
     .filter((listing) => {
       if (!needle) return true;
@@ -283,7 +293,8 @@ function buildListings(state, query = "", options = {}) {
     .map((listing) => {
       const normalizedListing = {
         ...listing,
-        location: resolveListingLocation(listing)
+        location: resolveListingLocation(listing),
+        market_median: marketMedians[listing.category] || null
       };
       const explicitLabel = labelsByListing.get(Number(listing.id));
       const prediction = predictPreference(normalizedListing, state.trainingModel);
@@ -406,23 +417,38 @@ async function searchAndStoreWebResults(query, mode) {
   try {
     const webSearch = await searchCarousell(query, { limit: mode === "more" ? 40 : 24 });
     const listings = await readJson("listings");
-    const existing = new Set(listings.map((listing) => listing.carousell_id));
-    const additions = webSearch.results
-      .filter((listing) => !existing.has(listing.carousell_id))
-      .map((listing, index) => ({
-        id: Math.max(0, ...listings.map((item) => item.id || 0)) + index + 1,
+    const existing = new Map(listings.map((listing, index) => [listing.carousell_id, { listing, index }]));
+    const additions = [];
+    let updated = 0;
+    let nextId = Math.max(0, ...listings.map((item) => item.id || 0)) + 1;
+
+    for (const listing of webSearch.results) {
+      const match = existing.get(listing.carousell_id);
+      if (match) {
+        listings[match.index] = mergeListingDetails(match.listing, listing);
+        updated += 1;
+        continue;
+      }
+      additions.push({
+        id: nextId,
         ...listing
-      }));
+      });
+      nextId += 1;
+    }
 
     if (additions.length > 0) {
       listings.push(...additions);
+    }
+
+    if (additions.length > 0 || updated > 0) {
       await writeJson("listings", listings);
     }
 
     return {
       source: "carousell-web",
       url: webSearch.url,
-      added: additions.length
+      added: additions.length,
+      updated
     };
   } catch (error) {
     return {
@@ -472,9 +498,37 @@ function makeDemoListings(query, startId, offset) {
   });
 }
 
-function deterministicMultiplier(value) {
-  const sum = [...value].reduce((total, char) => total + char.charCodeAt(0), 0);
-  return 1.18 + (sum % 45) / 100;
+function mergeListingDetails(existing, incoming) {
+  return {
+    ...existing,
+    ...incoming,
+    id: existing.id,
+    description: incoming.description || existing.description || "",
+    seller_name: incoming.seller_name && incoming.seller_name !== "Carousell seller" ? incoming.seller_name : existing.seller_name,
+    seller_id: incoming.seller_id || existing.seller_id,
+    seller_url: incoming.seller_url || existing.seller_url || "",
+    location: incoming.location || resolveListingLocation(existing),
+    current_price: incoming.current_price || existing.current_price,
+    image_urls: incoming.image_urls?.length ? incoming.image_urls : existing.image_urls || []
+  };
+}
+
+function calculateMarketMedians(listings) {
+  const grouped = {};
+  for (const listing of listings) {
+    const category = listing.category || "electronics";
+    const price = Number(listing.current_price || 0);
+    if (price <= 1 || price >= 100000) continue;
+    grouped[category] ||= [];
+    grouped[category].push(price);
+  }
+
+  return Object.fromEntries(
+    Object.entries(grouped).map(([category, prices]) => {
+      const sorted = prices.sort((a, b) => a - b);
+      return [category, sorted[Math.floor(sorted.length / 2)]];
+    })
+  );
 }
 
 function inferCategory(query) {

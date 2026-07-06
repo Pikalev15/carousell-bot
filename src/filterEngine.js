@@ -4,6 +4,7 @@ export const POST_TYPES = {
   WTF: "WTF",
   SPAM: "SPAM",
   BAD_PRICER: "BAD_PRICER",
+  BAD_DEAL: "BAD_DEAL",
   LEARNED_SKIP: "LEARNED_SKIP",
   SELLER_BLOCKED: "SELLER_BLOCKED",
   UNKNOWN: "UNKNOWN"
@@ -64,17 +65,25 @@ export function classifyListing(listing, filters, sellerBlacklist, config) {
 }
 
 export function scoreDeal(listing, config) {
-  const median = config.categoryMedians[listing.category] || listing.current_price;
+  const median = listing.market_median || config.categoryMedians[listing.category] || listing.current_price;
   const priceRatio = median ? listing.current_price / median : 1;
-  const priceScore = Math.max(0, Math.min(100, (1.35 - priceRatio) * 100));
+  const priceScore = Math.max(0, Math.min(100, (1.32 - priceRatio) * 110));
   const sellerScore = Math.min(100, (listing.seller_rating || 0) * 20);
   const ageHours = getListingAgeHours(listing);
   const ageScore = Math.max(0, Math.min(100, 100 - ageHours * 1.2));
   const preference = Number(listing.training?.preference_score ?? 50);
   const preferenceScore = Math.max(0, Math.min(100, preference));
   const badDealPenalty = preferenceScore < 35 ? (35 - preferenceScore) * 0.7 : 0;
-  const baseScore = priceScore * 0.42 + (conditionScore[listing.condition] || 50) * 0.18 + sellerScore * 0.12 + ageScore * 0.08 + preferenceScore * 0.2;
-  const score = Math.round(Math.max(0, Math.min(100, baseScore - badDealPenalty)));
+  const detailScore = getDetailScore(listing);
+  const suspiciousPenalty = getDealPenalty(listing);
+  const baseScore =
+    priceScore * 0.44 +
+    (conditionScore[listing.condition] || 50) * 0.12 +
+    sellerScore * 0.08 +
+    ageScore * 0.08 +
+    preferenceScore * 0.2 +
+    detailScore * 0.08;
+  const score = Math.round(Math.max(0, Math.min(100, baseScore - badDealPenalty - suspiciousPenalty)));
   const estimatedNegotiationPrice = Math.round(listing.current_price * (ageHours > 336 ? 0.88 : 0.92));
 
   return {
@@ -84,10 +93,31 @@ export function scoreDeal(listing, config) {
     seller_score: Math.round(sellerScore),
     age_score: Math.round(ageScore),
     preference_score: Math.round(preferenceScore),
+    detail_score: Math.round(detailScore),
+    penalty: Math.round(badDealPenalty + suspiciousPenalty),
     estimated_negotiation_price: estimatedNegotiationPrice,
     price_vs_median: Math.round(((listing.current_price - median) / median) * 100),
     trend_direction: listing.current_price < median * 0.98 ? "down" : listing.current_price > median * 1.02 ? "up" : "flat"
   };
+}
+
+function getDetailScore(listing) {
+  let score = 30;
+  if (String(listing.description || "").length >= 80) score += 25;
+  if (listing.location) score += 15;
+  if (listing.seller_url) score += 10;
+  if (Array.isArray(listing.image_urls) && listing.image_urls.length > 0) score += 10;
+  if (listing.price_source === "description") score += 10;
+  return Math.min(100, score);
+}
+
+function getDealPenalty(listing) {
+  const text = `${listing.title || ""} ${listing.description || ""}`.toLowerCase();
+  let penalty = 0;
+  if (/\b(no nego|no negotiation|fixed|firm|no lowball|lowballers ignored)\b/.test(text)) penalty += 8;
+  if (/\b(repair|faulty|spoilt|not working|for parts|issue|defect)\b/.test(text)) penalty += 15;
+  if (/\b(deposit|preorder|pre-order)\b/.test(text)) penalty += 10;
+  return penalty;
 }
 
 function getListingAgeHours(listing) {
