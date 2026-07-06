@@ -40,14 +40,14 @@ export async function refreshCarousellListingDetails(listing) {
     const details = await readDetailPage(page);
     const seller = extractSellerFromDetails(details, listing.seller_name);
     const description = extractDescription(details.bodyText, details.metaDescription, listing.title);
-    const location = extractLocation(details.bodyText, details.jsonLd, description);
+    const location = extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks);
     const detailPrice = extractRealPriceFromDescription(`${description}\n${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`);
     return {
       description,
       seller_name: seller.name || listing.seller_name,
       seller_id: seller.id || listing.seller_id,
       seller_url: seller.url || listing.seller_url || "",
-      location: location || listing.location || "Carousell SG",
+      location: location || cleanLocation(listing.location) || "",
       current_price: detailPrice || listing.current_price,
       price_source: detailPrice && detailPrice !== listing.current_price ? "description" : listing.price_source || "card",
       scraped_at: new Date().toISOString()
@@ -191,7 +191,7 @@ function normalizeListing(input) {
     seller_name: input.sellerName || parsedCard.sellerName || "Carousell seller",
     seller_url: input.sellerUrl || "",
     seller_rating: 0,
-    location: location || "Carousell SG",
+    location,
     days_listed: listedAgeMinutes === null ? 0 : Math.max(0, Math.floor(listedAgeMinutes / 1440)),
     listed_age_minutes: listedAgeMinutes,
     listed_at: listedAgeMinutes === null ? null : new Date(Date.now() - listedAgeMinutes * 60 * 1000).toISOString(),
@@ -234,7 +234,7 @@ async function enrichListingDetails(page, listings, limit) {
         sellerId: seller.id || listing.sellerId,
         sellerUrl: seller.url,
         description,
-        location: extractLocation(details.bodyText, details.jsonLd, description),
+        location: extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks),
         price: extractRealPriceFromDescription(`${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`) || listing.price
       });
     } catch {
@@ -345,7 +345,10 @@ export function extractDescription(bodyText, metaDescription, title) {
   return meta && !meta.toLowerCase().includes("carousell") ? cleanDescriptionText(meta, title) : "";
 }
 
-export function extractLocation(bodyText = "", jsonText = "", description = "") {
+export function extractLocation(bodyText = "", jsonText = "", description = "", locationLinks = []) {
+  const linkedLocation = extractLocationFromLinks(locationLinks);
+  if (linkedLocation) return linkedLocation;
+
   const jsonLocation = extractLocationFromJson(jsonText);
   if (jsonLocation) return jsonLocation;
 
@@ -355,15 +358,39 @@ export function extractLocation(bodyText = "", jsonText = "", description = "") 
     .filter(Boolean);
   const meetUpIndex = lines.findIndex((line) => /^(meet[-\s]?up|pickup|pick up|self collection)$/i.test(line));
   if (meetUpIndex >= 0) {
-    const sectionLines = lines.slice(meetUpIndex + 1);
-    const stopIndex = sectionLines.findIndex((line) =>
-      /^(delivery|payment|faq|description|seller information|meet the seller|report listing|similar listings|deal method|returns and refunds)$/i.test(line)
-    );
-    const location = cleanLocation((stopIndex >= 0 ? sectionLines.slice(0, stopIndex) : sectionLines).join(" "));
+    const location = extractLocationAfterHeading(lines, meetUpIndex);
     if (location) return location;
   }
 
+  const dealMethodIndex = lines.findIndex((line) => /^deal method$/i.test(line));
+  if (dealMethodIndex >= 0) {
+    const meetUpAfterDeal = lines.slice(dealMethodIndex + 1).findIndex((line) => /^meet[-\s]?up$/i.test(line));
+    if (meetUpAfterDeal >= 0) {
+      const location = extractLocationAfterHeading(lines, dealMethodIndex + 1 + meetUpAfterDeal);
+      if (location) return location;
+    }
+  }
+
   return extractLocationFromText(`${description}\n${bodyText}`);
+}
+
+function extractLocationAfterHeading(lines, headingIndex) {
+  const sectionLines = lines.slice(headingIndex + 1);
+  const stopIndex = sectionLines.findIndex((line) =>
+    /^(delivery|payment|faq|description|seller information|meet the seller|report listing|similar listings|deal method|returns and refunds|buyer protection|safety policy|make offer|chat)$/i.test(line)
+  );
+  return cleanLocation((stopIndex >= 0 ? sectionLines.slice(0, stopIndex) : sectionLines).join(" "));
+}
+
+function extractLocationFromLinks(locationLinks) {
+  for (const link of locationLinks || []) {
+    const textLocation = cleanLocation(link.text);
+    if (textLocation) return textLocation;
+    const hrefLocation = decodeURIComponent(String(link.href || "")).match(/\/maps\/place\/([^/?]+)/i)?.[1]?.replace(/\+/g, " ");
+    const location = cleanLocation(hrefLocation || "");
+    if (location) return location;
+  }
+  return "";
 }
 
 function extractLocationFromJson(jsonText) {
@@ -414,7 +441,11 @@ async function readDetailPage(page) {
       text: anchor.textContent?.trim() || "",
       href: anchor.href || ""
     }));
-    return { bodyText, metaDescription, jsonLd, profileLinks };
+    const locationLinks = [...document.querySelectorAll('a[href*="google.com/maps"], a[href*="maps.google"], a[href*="/maps/place/"]')].map((anchor) => ({
+      text: anchor.textContent?.trim() || "",
+      href: anchor.href || ""
+    }));
+    return { bodyText, metaDescription, jsonLd, profileLinks, locationLinks };
   });
 }
 

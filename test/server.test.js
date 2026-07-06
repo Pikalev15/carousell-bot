@@ -44,6 +44,7 @@ test("serves health and listings endpoints", async () => {
     assert.ok(listings.length > 0);
     assert.equal(listings.some((listing) => listing.current_price === 0), false);
     assert.ok(allListings.length >= listings.length);
+    assert.equal(allListings.some((listing) => listing.location === "Carousell SG"), false);
     assert.equal(pricedListings.every((listing) => listing.current_price >= 900 && listing.current_price <= 1200), true);
     assert.equal(recentListings.every((listing) => (listing.listed_age_minutes ?? listing.days_listed * 1440) <= 1440), true);
     assert.equal(search.query, "MacBook");

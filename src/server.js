@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyListing, scoreDeal } from "./filterEngine.js";
-import { refreshCarousellListingDetails, searchCarousell } from "./carousellSearch.js";
+import { extractLocation, refreshCarousellListingDetails, searchCarousell } from "./carousellSearch.js";
 import { getState, readJson, writeJson } from "./store.js";
 import { labelPolarity, predictPreference, trainModel } from "./trainingModel.js";
 
@@ -281,14 +281,18 @@ function buildListings(state, query = "", options = {}) {
       return `${listing.title} ${listing.description} ${listing.category}`.toLowerCase().includes(needle);
     })
     .map((listing) => {
+      const normalizedListing = {
+        ...listing,
+        location: resolveListingLocation(listing)
+      };
       const explicitLabel = labelsByListing.get(Number(listing.id));
-      const prediction = predictPreference(listing, state.trainingModel);
-      const classification = applyTrainingOverrides(classifyListing(listing, state.filters, state.sellers, state.config), explicitLabel, prediction, state.trainingModel);
-      const scoreInput = { ...listing, training: prediction };
+      const prediction = predictPreference(normalizedListing, state.trainingModel);
+      const classification = applyTrainingOverrides(classifyListing(normalizedListing, state.filters, state.sellers, state.config), explicitLabel, prediction, state.trainingModel);
+      const scoreInput = { ...normalizedListing, training: prediction };
       const score = classification.is_filtered ? null : scoreDeal(scoreInput, state.config);
       if (score) score.training_preference = prediction.preference_score;
       return {
-        ...listing,
+        ...normalizedListing,
         classification,
         training: prediction,
         score
@@ -302,6 +306,12 @@ function buildListings(state, query = "", options = {}) {
       if (locationNeedle && !String(listing.location || "").toLowerCase().includes(locationNeedle)) return false;
       return true;
     });
+}
+
+function resolveListingLocation(listing) {
+  const existing = String(listing.location || "").trim();
+  if (existing && !/^carousell sg$/i.test(existing)) return existing;
+  return extractLocation("", "", listing.description || "");
 }
 
 function getListingAgeHours(listing) {

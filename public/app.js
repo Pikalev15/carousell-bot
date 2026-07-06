@@ -330,7 +330,7 @@ function card(listing) {
       <div class="card-header">
         <div>
           <p class="title">${escapeHtml(listing.title)}</p>
-          <p class="meta">${sellerMarkup(listing)} | ${listing.seller_rating} stars | ${formatAge(listing)} | ${escapeHtml(listing.location)}</p>
+          <p class="meta">${sellerMarkup(listing)} | ${listing.seller_rating} stars | ${formatAge(listing)} | ${displayLocation(listing)}</p>
         </div>
         <div class="badge-stack">${badge}${labelBadge}</div>
       </div>
@@ -362,7 +362,7 @@ function openDetails(listing) {
     <div class="detail-grid">
       <p><strong>Price</strong><span>${formatMoney(listing.current_price)}</span></p>
       <p><strong>Seller</strong><span>${sellerMarkup(listing)} (${listing.seller_rating} stars)</span></p>
-      <p><strong>Location</strong><span>${escapeHtml(listing.location || "Not captured yet")}</span></p>
+      <p><strong>Location</strong><span>${displayLocation(listing)}</span></p>
       <p><strong>Condition</strong><span>${escapeHtml(listing.condition)}</span></p>
       <p><strong>Classification</strong><span>${escapeHtml(listing.classification.post_type)}</span></p>
       <p class="description-row"><strong>Description</strong><span>${escapeHtml(listing.description || "No description captured yet. Search this listing again to refresh details.")}</span></p>
@@ -409,6 +409,11 @@ function formatMoney(value) {
 function sellerMarkup(listing) {
   const name = escapeHtml(listing.seller_name || "Carousell seller");
   return listing.seller_url ? `<a href="${escapeHtml(listing.seller_url)}" target="_blank" rel="noopener">${name}</a>` : name;
+}
+
+function displayLocation(listing) {
+  const location = String(listing.location || "").trim();
+  return escapeHtml(location && !/^carousell sg$/i.test(location) ? location : "Location not listed");
 }
 
 function formatAge(listing) {

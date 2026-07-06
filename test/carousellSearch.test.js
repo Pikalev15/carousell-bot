@@ -62,6 +62,28 @@ test("extracts location from Carousell meetup section", () => {
   assert.equal(extractLocation(body), "Admiralty MRT Station");
 });
 
+test("extracts location from Carousell deal method section", () => {
+  const body = `
+    Deal method
+    Meet-up
+    One Duchess
+    Buyer Protection
+  `;
+
+  assert.equal(extractLocation(body), "One Duchess");
+});
+
+test("extracts location from map links", () => {
+  const links = [
+    {
+      text: "One Duchess",
+      href: "https://www.google.com/maps/place/1.32497485,103.80845555"
+    }
+  ];
+
+  assert.equal(extractLocation("", "", "", links), "One Duchess");
+});
+
 test("extracts location from seller-written description", () => {
   const description = "Self collect at 731690/Admiralty MRT. Can deliver to your place at my convenience for additional $5.";
 
