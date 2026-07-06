@@ -1,1 +1,121 @@
-[]
+[
+  {
+    "listing_id": 9,
+    "user_rating": "skip",
+    "asked_price": 280,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T11:58:18.710Z"
+  },
+  {
+    "listing_id": 11,
+    "user_rating": "skip",
+    "asked_price": 5,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T11:58:54.057Z"
+  },
+  {
+    "listing_id": 63,
+    "user_rating": "good",
+    "asked_price": 110,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T12:00:08.918Z"
+  },
+  {
+    "listing_id": 70,
+    "user_rating": "skip",
+    "asked_price": 1,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T12:00:29.589Z"
+  },
+  {
+    "listing_id": 8,
+    "user_rating": "good",
+    "asked_price": 38,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T12:08:03.214Z"
+  },
+  {
+    "listing_id": 14,
+    "user_rating": "skip",
+    "asked_price": 3,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T12:09:04.832Z"
+  },
+  {
+    "listing_id": 50,
+    "user_rating": "spam",
+    "asked_price": 59,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T12:09:23.452Z"
+  },
+  {
+    "listing_id": 57,
+    "user_rating": "spam",
+    "asked_price": 888,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T12:09:28.929Z"
+  },
+  {
+    "listing_id": 51,
+    "user_rating": "skip",
+    "asked_price": 105,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T12:09:36.446Z"
+  },
+  {
+    "listing_id": 2,
+    "user_rating": "skip",
+    "asked_price": 980,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T12:13:58.341Z"
+  },
+  {
+    "listing_id": 13,
+    "user_rating": "bad_deal",
+    "asked_price": 188,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T13:16:39.745Z"
+  },
+  {
+    "listing_id": 6,
+    "user_rating": "good",
+    "asked_price": 300,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T13:17:58.282Z"
+  },
+  {
+    "listing_id": 7,
+    "user_rating": "good",
+    "asked_price": 55,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T13:18:29.643Z"
+  },
+  {
+    "listing_id": 102,
+    "user_rating": "good",
+    "asked_price": 70,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T14:15:29.859Z"
+  },
+  {
+    "listing_id": 104,
+    "user_rating": "not_spam",
+    "asked_price": 118,
+    "negotiated_price": null,
+    "timestamp": "2026-07-05T14:15:40.632Z"
+  },
+  {
+    "listing_id": 103,
+    "user_rating": "good",
+    "asked_price": 108,
+    "negotiated_price": null,
+    "timestamp": "2026-07-06T12:32:20.083Z"
+  },
+  {
+    "listing_id": 118,
+    "user_rating": "good",
+    "asked_price": 28,
+    "negotiated_price": null,
+    "timestamp": "2026-07-06T12:32:26.477Z"
+  }
+]

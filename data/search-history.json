@@ -1,1 +1,56 @@
-[]
+[
+  {
+    "id": 1783340993227,
+    "query": "lian li",
+    "mode": "web",
+    "timestamp": "2026-07-06T12:29:53.227Z"
+  },
+  {
+    "id": 1783338715822,
+    "query": "lian li",
+    "mode": "web",
+    "timestamp": "2026-07-06T11:51:55.822Z"
+  },
+  {
+    "id": 1783260672701,
+    "query": "lian li dan a3",
+    "mode": "web",
+    "timestamp": "2026-07-05T14:11:12.701Z"
+  },
+  {
+    "id": 1783253840900,
+    "query": "ryzen 7 5700",
+    "mode": "web",
+    "timestamp": "2026-07-05T12:17:20.900Z"
+  },
+  {
+    "id": 1783252749713,
+    "query": "pc parts",
+    "mode": "web",
+    "timestamp": "2026-07-05T11:59:09.713Z"
+  },
+  {
+    "id": 1783252747502,
+    "query": "pc parts",
+    "mode": "web",
+    "timestamp": "2026-07-05T11:59:07.502Z"
+  },
+  {
+    "id": 1783251969291,
+    "query": "pc",
+    "mode": "web",
+    "timestamp": "2026-07-05T11:46:09.291Z"
+  },
+  {
+    "id": 1783251830932,
+    "query": "pc",
+    "mode": "web",
+    "timestamp": "2026-07-05T11:43:50.932Z"
+  },
+  {
+    "id": 1783251319425,
+    "query": "pc fans",
+    "mode": "web",
+    "timestamp": "2026-07-05T11:35:19.425Z"
+  }
+]
