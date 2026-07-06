@@ -37,6 +37,7 @@ export async function refreshCarousellListingDetails(listing) {
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+    await expandDetailSections(page);
     const details = await readDetailPage(page);
     const seller = extractSellerFromDetails(details, listing.seller_name);
     const description = extractDescription(details.bodyText, details.metaDescription, listing.title);
@@ -224,6 +225,7 @@ async function enrichListingDetails(page, listings, limit) {
     try {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+      await expandDetailSections(page);
       const details = await readDetailPage(page);
       const seller = extractSellerFromDetails(details, parsed.sellerName);
       const description = extractDescription(details.bodyText, details.metaDescription, parsed.title);
@@ -447,6 +449,17 @@ async function readDetailPage(page) {
     }));
     return { bodyText, metaDescription, jsonLd, profileLinks, locationLinks };
   });
+}
+
+async function expandDetailSections(page) {
+  const readMore = page.getByText(/^Read more$/i);
+  const count = await readMore.count().catch(() => 0);
+  for (let index = 0; index < Math.min(count, 6); index += 1) {
+    const target = readMore.nth(index);
+    if (!(await target.isVisible().catch(() => false))) continue;
+    await target.click({ timeout: 1500 }).catch(() => {});
+    await page.waitForTimeout(250);
+  }
 }
 
 async function newBrowserPage(options = {}) {
