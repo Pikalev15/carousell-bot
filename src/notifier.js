@@ -22,7 +22,7 @@ export async function sendTelegramMessage(message, config = null) {
   });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.description || "Telegram sendMessage failed");
+    throw new Error(payload.description || `Telegram sendMessage failed (${response.status})`);
   }
   return { ok: true, payload };
 }
@@ -33,7 +33,12 @@ export async function notifyAlert(input) {
     ok: false,
     error: error.message
   }));
-  const next = createAlert({ ...alert, sent_at: result.ok ? new Date().toISOString() : null });
+  await recordTelegramStatus(result);
+  const next = createAlert({
+    ...alert,
+    sent_at: result.ok ? new Date().toISOString() : null,
+    error: result.ok ? null : result.error || result.reason || "Telegram notification failed"
+  });
   return { alert: next, result };
 }
 
@@ -45,11 +50,23 @@ export async function updateTelegramConfig(input) {
       ...config.telegram,
       enabled: Boolean(input.enabled),
       botToken: String(input.botToken || input.bot_token || "").trim(),
-      chatId: String(input.chatId || input.chat_id || "").trim()
+      chatId: String(input.chatId || input.chat_id || "").trim(),
+      status: "saved",
+      lastError: "",
+      verifiedAt: config.telegram?.verifiedAt || null
     }
   };
   await writeJson("config", next);
   return maskTelegramConfig(next.telegram);
+}
+
+export async function sendTelegramTestMessage() {
+  const result = await sendTelegramMessage("Carousell Bot test notification").catch((error) => ({
+    ok: false,
+    error: error.message
+  }));
+  await recordTelegramStatus(result);
+  return result;
 }
 
 export function maskTelegramConfig(telegram = {}) {
@@ -58,8 +75,26 @@ export function maskTelegramConfig(telegram = {}) {
     enabled: Boolean(telegram.enabled),
     botTokenConfigured: token.length > 0,
     botTokenPreview: token ? `${token.slice(0, 5)}...${token.slice(-4)}` : "",
-    chatId: telegram.chatId || ""
+    chatId: telegram.chatId || "",
+    status: telegram.status || (telegram.verifiedAt ? "verified" : token ? "saved" : "missing"),
+    lastError: telegram.lastError || "",
+    verifiedAt: telegram.verifiedAt || null
   };
+}
+
+async function recordTelegramStatus(result) {
+  const config = await readJson("config");
+  const telegram = config.telegram || {};
+  const next = {
+    ...config,
+    telegram: {
+      ...telegram,
+      status: result.ok ? "verified" : "error",
+      verifiedAt: result.ok ? new Date().toISOString() : telegram.verifiedAt || null,
+      lastError: result.ok ? "" : result.error || result.reason || "Telegram notification failed"
+    }
+  };
+  await writeJson("config", next);
 }
 
 function formatAlertMessage(alert) {

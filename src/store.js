@@ -1,12 +1,19 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Database from "better-sqlite3";
+
+let DatabaseSync = null;
+try {
+  ({ DatabaseSync } = await import("node:sqlite"));
+} catch {
+  DatabaseSync = null;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const dataDir = path.join(root, "data");
 const dbPath = process.env.CAROUSELL_DB_PATH || path.join(dataDir, "carousell-bot.db");
+let transactionDepth = 0;
 
 const jsonPaths = {
   listings: path.join(dataDir, "listings.json"),
@@ -15,19 +22,24 @@ const jsonPaths = {
   config: path.join(dataDir, "config.json"),
   labels: path.join(dataDir, "labels.json"),
   searches: path.join(dataDir, "search-history.json"),
-  trainingModel: path.join(dataDir, "training-model.json")
+  trainingModel: path.join(dataDir, "training-model.json"),
+  watchedSearches: path.join(dataDir, "watched-searches.local.json"),
+  alerts: path.join(dataDir, "alerts.local.json"),
+  activity: path.join(dataDir, "activity.local.json")
 };
 
 const db = openDatabase();
-ensureSchema();
-migrateJsonIfNeeded();
+if (db) {
+  ensureSchema();
+  migrateJsonIfNeeded();
+}
 
 export function getDatabase() {
   return db;
 }
 
 export function closeDatabase() {
-  db.close();
+  db?.close();
 }
 
 export async function readJson(name) {
@@ -54,6 +66,7 @@ export async function getState() {
 }
 
 export function upsertListing(listing) {
+  if (!db) return upsertJsonListing(listing);
   const now = new Date().toISOString();
   const existing = listing.id ? getListingById(listing.id) : getListingByCarousellId(listing.carousell_id);
   const next = {
@@ -95,35 +108,39 @@ export function upsertListing(listing) {
 }
 
 export function bulkUpsertListings(listings) {
-  const tx = db.transaction((items) => items.map((item) => upsertListing(item)));
-  return tx(listings);
+  return runTransaction(() => listings.map((item) => upsertListing(item)));
 }
 
 export function getListingById(id) {
+  if (!db) return readCollection("listings").find((listing) => Number(listing.id) === Number(id)) || null;
   const row = db.prepare("SELECT payload FROM listings WHERE id = ?").get(Number(id));
   return row ? parsePayload(row.payload) : null;
 }
 
 export function getListingByCarousellId(carousellId) {
   if (!carousellId) return null;
+  if (!db) return readCollection("listings").find((listing) => listing.carousell_id === carousellId) || null;
   const row = db.prepare("SELECT payload FROM listings WHERE carousell_id = ?").get(carousellId);
   return row ? parsePayload(row.payload) : null;
 }
 
 export function addPriceHistory(listingId, price, recordedAt = new Date().toISOString()) {
   if (!listingId || Number(price || 0) < 0) return null;
+  if (!db) return null;
   const previous = db.prepare("SELECT price FROM price_history WHERE listing_id = ? ORDER BY recorded_at DESC, id DESC LIMIT 1").get(Number(listingId));
   if (previous && Number(previous.price) === Number(price)) return previous;
   return db.prepare("INSERT INTO price_history (listing_id, price, recorded_at) VALUES (?, ?, ?)").run(Number(listingId), Number(price || 0), recordedAt);
 }
 
 export function getPriceHistory(listingId) {
+  if (!db) return [];
   return db
     .prepare("SELECT listing_id, price, recorded_at FROM price_history WHERE listing_id = ? ORDER BY recorded_at ASC, id ASC")
     .all(Number(listingId));
 }
 
 export function getWatchedSearches() {
+  if (!db) return readJsonFile("watchedSearches", []);
   return db
     .prepare("SELECT payload FROM watched_searches ORDER BY active DESC, updated_at DESC")
     .all()
@@ -131,11 +148,13 @@ export function getWatchedSearches() {
 }
 
 export function getWatchedSearch(id) {
+  if (!db) return getWatchedSearches().find((item) => Number(item.id) === Number(id)) || null;
   const row = db.prepare("SELECT payload FROM watched_searches WHERE id = ?").get(Number(id));
   return row ? parsePayload(row.payload) : null;
 }
 
 export function upsertWatchedSearch(input) {
+  if (!db) return upsertJsonWatchedSearch(input);
   const now = new Date().toISOString();
   const existing = input.id ? getWatchedSearch(input.id) : null;
   const next = {
@@ -165,6 +184,11 @@ export function upsertWatchedSearch(input) {
 }
 
 export function deleteWatchedSearch(id) {
+  if (!db) {
+    const current = getWatchedSearches();
+    writeJsonFile("watchedSearches", current.filter((item) => Number(item.id) !== Number(id)));
+    return current.length - getWatchedSearches().length;
+  }
   return db.prepare("DELETE FROM watched_searches WHERE id = ?").run(Number(id)).changes;
 }
 
@@ -175,6 +199,10 @@ export function updateWatchedSearchRun(id, lastRunAt = new Date().toISOString())
 }
 
 export function getAlerts({ unreadOnly = false, limit = 40 } = {}) {
+  if (!db) {
+    const alerts = readJsonFile("alerts", []);
+    return alerts.filter((alert) => !unreadOnly || !alert.read_at).slice(0, limit);
+  }
   const where = unreadOnly ? "WHERE read_at IS NULL" : "";
   return db
     .prepare(`SELECT payload FROM alerts ${where} ORDER BY created_at DESC, id DESC LIMIT ?`)
@@ -183,6 +211,7 @@ export function getAlerts({ unreadOnly = false, limit = 40 } = {}) {
 }
 
 export function createAlert(input) {
+  if (!db) return upsertJsonAlert(input);
   const now = new Date().toISOString();
   const next = {
     id: input.id || Date.now(),
@@ -193,7 +222,8 @@ export function createAlert(input) {
     watch_id: input.watch_id || null,
     created_at: input.created_at || now,
     read_at: input.read_at || null,
-    sent_at: input.sent_at || null
+    sent_at: input.sent_at || null,
+    error: input.error || null
   };
   db.prepare(`
     INSERT INTO alerts (id, type, title, message, listing_id, watch_id, created_at, read_at, sent_at, payload)
@@ -206,14 +236,18 @@ export function createAlert(input) {
 export function markAlertsRead() {
   const readAt = new Date().toISOString();
   const alerts = getAlerts({ limit: 500 }).map((alert) => ({ ...alert, read_at: alert.read_at || readAt }));
-  const tx = db.transaction((items) => {
+  if (!db) {
+    writeJsonFile("alerts", alerts);
+    return { marked: alerts.length, read_at: readAt };
+  }
+  runTransaction((items) => {
     for (const alert of items) db.prepare("UPDATE alerts SET read_at = ?, payload = ? WHERE id = ?").run(alert.read_at, JSON.stringify(alert), alert.id);
-  });
-  tx(alerts);
+  }, alerts);
   return { marked: alerts.length, read_at: readAt };
 }
 
 export function addActivity(input) {
+  if (!db) return appendJsonActivity(input);
   const next = {
     id: input.id || Date.now(),
     type: input.type || "event",
@@ -232,14 +266,16 @@ export function addActivity(input) {
 }
 
 export function getActivity(limit = 50) {
+  if (!db) return readJsonFile("activity", []).slice(0, limit);
   return db.prepare("SELECT payload FROM activity ORDER BY timestamp DESC, id DESC LIMIT ?").all(Number(limit)).map((row) => parsePayload(row.payload));
 }
 
 function openDatabase() {
+  if (!DatabaseSync) return null;
   mkdirSync(path.dirname(dbPath), { recursive: true });
-  const database = new Database(dbPath);
-  database.pragma("journal_mode = WAL");
-  database.pragma("foreign_keys = ON");
+  const database = new DatabaseSync(dbPath);
+  database.exec("PRAGMA journal_mode = WAL");
+  database.exec("PRAGMA foreign_keys = ON");
   return database;
 }
 
@@ -342,7 +378,7 @@ function ensureSchema() {
 function migrateJsonIfNeeded() {
   const migrated = db.prepare("SELECT value FROM config WHERE key = '__json_migrated'").get();
   if (migrated) return;
-  const tx = db.transaction(() => {
+  runTransaction(() => {
     writeCollection("listings", readJsonFile("listings", []));
     writeCollection("filters", readJsonFile("filters", []));
     writeCollection("sellers", readJsonFile("sellers", []));
@@ -352,10 +388,14 @@ function migrateJsonIfNeeded() {
     writeCollection("trainingModel", readJsonFile("trainingModel", {}));
     db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('__json_migrated', ?)").run(new Date().toISOString());
   });
-  tx();
 }
 
 function readCollection(name) {
+  if (!db) {
+    if (name === "config") return withConfigDefaults(readJsonFile("config", {}));
+    if (name === "trainingModel") return readJsonFile("trainingModel", {});
+    return readJsonFile(name, []);
+  }
   if (name === "listings") return db.prepare("SELECT payload FROM listings ORDER BY id ASC").all().map((row) => parsePayload(row.payload));
   if (name === "filters") return db.prepare("SELECT payload FROM filters ORDER BY id ASC").all().map((row) => parsePayload(row.payload));
   if (name === "sellers") return db.prepare("SELECT payload FROM sellers ORDER BY blocked_at DESC, seller_id ASC").all().map((row) => parsePayload(row.payload));
@@ -367,6 +407,11 @@ function readCollection(name) {
 }
 
 function writeCollection(name, value) {
+  if (!db) {
+    if (name === "config") return writeJsonFile("config", withConfigDefaults(value));
+    if (name === "trainingModel") return writeJsonFile("trainingModel", value || {});
+    return writeJsonFile(name, Array.isArray(value) ? value : []);
+  }
   if (name === "listings") return replaceRows("listings", value, listingRow);
   if (name === "filters") return replaceRows("filters", value, filterRow);
   if (name === "sellers") return replaceRows("sellers", value, sellerRow);
@@ -385,11 +430,10 @@ function writeCollection(name, value) {
 
 function replaceRows(table, rows, rowMapper) {
   const items = Array.isArray(rows) ? rows : [];
-  const tx = db.transaction((values) => {
+  runTransaction((values) => {
     db.prepare(`DELETE FROM ${table}`).run();
     for (const item of values) insertRow(table, rowMapper(item));
-  });
-  tx(items);
+  }, items);
 }
 
 function insertRow(table, row) {
@@ -483,7 +527,15 @@ function watchedSearchRow(search) {
 
 function alertRow(alert) {
   return {
-    ...alert,
+    id: alert.id,
+    type: alert.type,
+    title: alert.title,
+    message: alert.message,
+    listing_id: alert.listing_id,
+    watch_id: alert.watch_id,
+    created_at: alert.created_at,
+    read_at: alert.read_at,
+    sent_at: alert.sent_at,
     payload: JSON.stringify(alert)
   };
 }
@@ -496,10 +548,12 @@ function activityRow(activity) {
 }
 
 function nextListingId() {
+  if (!db) return Math.max(0, ...readCollection("listings").map((item) => Number(item.id || 0))) + 1;
   return Number(db.prepare("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM listings").get().id);
 }
 
 function nextWatchedSearchId() {
+  if (!db) return Math.max(0, ...getWatchedSearches().map((item) => Number(item.id || 0))) + 1;
   return Number(db.prepare("SELECT COALESCE(MAX(id), 0) + 1 AS id FROM watched_searches").get().id);
 }
 
@@ -507,6 +561,99 @@ function readJsonFile(name, fallback) {
   const filePath = jsonPaths[name];
   if (!filePath || !existsSync(filePath)) return fallback;
   return JSON.parse(readFileSync(filePath, "utf8"));
+}
+
+function writeJsonFile(name, value) {
+  const filePath = jsonPaths[name];
+  if (!filePath) throw new Error(`Unknown JSON store: ${name}`);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function runTransaction(callback, value) {
+  if (transactionDepth > 0) return callback(value);
+  transactionDepth += 1;
+  db.exec("BEGIN");
+  try {
+    const result = callback(value);
+    db.exec("COMMIT");
+    transactionDepth -= 1;
+    return result;
+  } catch (error) {
+    db.exec("ROLLBACK");
+    transactionDepth -= 1;
+    throw error;
+  }
+}
+
+function upsertJsonListing(listing) {
+  const listings = readCollection("listings");
+  const existingIndex = listings.findIndex((item) => Number(item.id) === Number(listing.id) || item.carousell_id === listing.carousell_id);
+  const next = { ...listings[existingIndex], ...listing, id: listing.id || listings[existingIndex]?.id || nextListingId() };
+  if (existingIndex >= 0) listings[existingIndex] = next;
+  else listings.push(next);
+  writeCollection("listings", listings);
+  return next;
+}
+
+function upsertJsonWatchedSearch(input) {
+  const watches = getWatchedSearches();
+  const existingIndex = watches.findIndex((item) => Number(item.id) === Number(input.id));
+  const existing = existingIndex >= 0 ? watches[existingIndex] : null;
+  const now = new Date().toISOString();
+  const next = {
+    id: existing?.id || input.id || nextWatchedSearchId(),
+    query: String(input.query || existing?.query || "").trim(),
+    price_ceiling: input.price_ceiling === "" || input.price_ceiling === null || input.price_ceiling === undefined ? null : Number(input.price_ceiling),
+    category: String(input.category || existing?.category || "").trim(),
+    active: input.active === undefined ? existing?.active ?? true : Boolean(input.active),
+    created_at: existing?.created_at || now,
+    updated_at: now,
+    last_run_at: input.last_run_at || existing?.last_run_at || null
+  };
+  if (!next.query) throw new Error("query is required");
+  if (existingIndex >= 0) watches[existingIndex] = next;
+  else watches.push(next);
+  writeJsonFile("watchedSearches", watches);
+  return next;
+}
+
+function upsertJsonAlert(input) {
+  const alerts = readJsonFile("alerts", []);
+  const now = new Date().toISOString();
+  const next = {
+    id: input.id || Date.now(),
+    type: input.type || "deal",
+    title: input.title || "Carousell alert",
+    message: input.message || "",
+    listing_id: input.listing_id || null,
+    watch_id: input.watch_id || null,
+    created_at: input.created_at || now,
+    read_at: input.read_at || null,
+    sent_at: input.sent_at || null,
+    error: input.error || null
+  };
+  const existingIndex = alerts.findIndex((alert) => Number(alert.id) === Number(next.id));
+  if (existingIndex >= 0) alerts[existingIndex] = next;
+  else alerts.unshift(next);
+  writeJsonFile("alerts", alerts);
+  return next;
+}
+
+function appendJsonActivity(input) {
+  const activity = readJsonFile("activity", []);
+  const next = {
+    id: input.id || Date.now(),
+    type: input.type || "event",
+    title: input.title || "Activity",
+    detail: input.detail || "",
+    timestamp: input.timestamp || new Date().toISOString(),
+    listing_id: input.listing_id || null,
+    watch_id: input.watch_id || null
+  };
+  activity.unshift(next);
+  writeJsonFile("activity", activity.slice(0, 500));
+  return next;
 }
 
 function parsePayload(value) {

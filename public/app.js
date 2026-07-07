@@ -537,11 +537,16 @@ function renderScheduler() {
 
 function renderTelegram() {
   const telegram = state.config.telegram || {};
+  const status = telegram.status || (telegram.verifiedAt ? "verified" : telegram.botTokenConfigured ? "saved" : "missing");
+  const statusLabel = status === "verified" ? "Verified working" : status === "error" ? "Connection error" : status === "saved" ? "Saved, not verified" : "Not configured";
+  const error = telegram.lastError ? `<div class="telegram-error"><span class="meta">Last error</span><strong>${escapeHtml(telegram.lastError)}</strong></div>` : "";
   document.getElementById("telegram-status").innerHTML = `
-    <div><span class="meta">Status</span><strong>${telegram.enabled ? "Enabled" : "Paused"}</strong></div>
+    <div class="telegram-state ${escapeHtml(status)}"><span class="meta">Connection</span><strong>${escapeHtml(statusLabel)}</strong></div>
+    <div><span class="meta">Notifications</span><strong>${telegram.enabled ? "Enabled" : "Paused"}</strong></div>
     <div><span class="meta">Token</span><strong>${telegram.botTokenConfigured ? "Saved" : "Missing"}</strong></div>
     <div><span class="meta">Chat</span><strong>${escapeHtml(telegram.chatId || "Missing")}</strong></div>
-    <div><span class="meta">Preview</span><strong>${escapeHtml(telegram.botTokenPreview || "-")}</strong></div>
+    <div><span class="meta">Masked token</span><strong>${escapeHtml(telegram.botTokenPreview || "-")}</strong></div>
+    ${error}
   `;
 }
 

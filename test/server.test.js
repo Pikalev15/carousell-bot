@@ -8,8 +8,10 @@ test("serves core and roadmap API endpoints", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "carousell-bot-"));
   process.env.CAROUSELL_DB_PATH = path.join(tempDir, "test.db");
   const cacheKey = Date.now();
+  await assert.doesNotReject(() => import("../src/store.js"));
   const { server } = await import(`../src/server.js?db=${cacheKey}`);
   const { closeDatabase } = await import("../src/store.js");
+  const { notifyAlert } = await import("../src/notifier.js");
   await new Promise((resolve) => server.listen(0, resolve));
   const { port } = server.address();
   const base = `http://localhost:${port}`;
@@ -36,6 +38,8 @@ test("serves core and roadmap API endpoints", async () => {
     const marked = await post(`${base}/api/alerts/mark-read`, {});
     const activity = await fetch(`${base}/api/activity`).then((response) => response.json());
     const telegram = await post(`${base}/api/config/telegram`, { enabled: false, botToken: "12345:testtoken", chatId: "42" });
+    const telegramTest = await post(`${base}/api/telegram/test`, {});
+    const fakeDealNotification = await notifyAlert({ type: "new_deal", title: "Fake deal", message: "Test notification path", listing_id: 0 });
     const config = await fetch(`${base}/api/config`).then((response) => response.json());
 
     assert.equal(health.ok, true);
@@ -64,6 +68,10 @@ test("serves core and roadmap API endpoints", async () => {
     assert.equal(typeof marked.marked, "number");
     assert.equal(Array.isArray(activity), true);
     assert.equal(telegram.botTokenConfigured, true);
+    assert.equal(telegramTest.ok, false);
+    assert.match(telegramTest.reason || telegramTest.error, /Telegram/i);
+    assert.equal(fakeDealNotification.result.ok, false);
+    assert.equal(fakeDealNotification.alert.error.includes("Telegram"), true);
     assert.equal(config.telegram.botTokenConfigured, true);
   } finally {
     server.closeAllConnections();

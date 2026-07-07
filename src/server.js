@@ -5,7 +5,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyListing, scoreDeal } from "./filterEngine.js";
 import { extractLocation, refreshCarousellListingDetails, searchCarousell } from "./carousellSearch.js";
 import { lookupMsrpFromGoogle } from "./msrpSearch.js";
-import { maskTelegramConfig, notifyAlert, sendTelegramMessage, updateTelegramConfig } from "./notifier.js";
+import { maskTelegramConfig, notifyAlert, sendTelegramTestMessage, updateTelegramConfig } from "./notifier.js";
 import { SearchScheduler } from "./scheduler.js";
 import {
   addActivity,
@@ -359,7 +359,7 @@ async function handleApi(request, response, url) {
   }
 
   if (request.method === "POST" && url.pathname === "/api/telegram/test") {
-    const result = await sendTelegramMessage("Carousell Bot test notification");
+    const result = await sendTelegramTestMessage();
     sendJson(response, 200, result);
     return;
   }
