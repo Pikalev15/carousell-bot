@@ -19,6 +19,15 @@ const state = {
 };
 
 const API_TIMEOUT_MS = 15000;
+// Playwright-backed scraping endpoints launch a real browser, navigate, wait for
+// network idle, and hydrate several listing detail pages before responding — this
+// routinely takes well over 15s, so they get a much longer budget than everything else.
+const SLOW_ENDPOINT_TIMEOUT_MS = 120000;
+const SLOW_ENDPOINT_PATTERNS = [/^\/api\/search$/, /^\/api\/listings\/[^/]+\/refresh-details$/, /^\/api\/scheduler\/run$/];
+
+function timeoutForPath(path) {
+  return SLOW_ENDPOINT_PATTERNS.some((pattern) => pattern.test(path)) ? SLOW_ENDPOINT_TIMEOUT_MS : API_TIMEOUT_MS;
+}
 
 const api = {
   async get(path) {
@@ -950,14 +959,15 @@ async function checkedJson(response) {
 }
 
 async function request(path, options = {}) {
+  const timeoutMs = timeoutForPath(path);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(path, { ...options, signal: controller.signal });
     return await checkedJson(response);
   } catch (error) {
     if (error.name === "AbortError") {
-      throw new Error(`Request timed out after ${API_TIMEOUT_MS / 1000}s`);
+      throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
     }
     throw error;
   } finally {
