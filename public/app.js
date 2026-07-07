@@ -48,7 +48,6 @@ document.getElementById("density-toggle").addEventListener("click", () => {
   applyDensity();
   renderAll();
 });
-document.getElementById("dashboard-sort").addEventListener("change", renderLatestListings);
 document.getElementById("dashboard-search-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const query = document.getElementById("dashboard-query").value.trim();
@@ -195,7 +194,7 @@ async function load() {
 
 function renderAll() {
   renderStats();
-  renderLatestListings();
+  renderDashboardOverview();
   renderDeals();
   renderListings();
   renderSearch();
@@ -261,18 +260,56 @@ function renderStats() {
 }
 
 function renderDeals() {
-  document.getElementById("deals").innerHTML = state.deals.length
-    ? sortListings(state.deals, "score").map(card).join("")
-    : `<p class="empty-state">No listings are above the deal threshold yet. Latest listings are still shown above so the dashboard does not go blank.</p>`;
+  const topDeals = sortListings(state.deals, "score").slice(0, state.density === "compact" ? 6 : 4);
+  document.getElementById("deals").innerHTML = topDeals.length
+    ? topDeals.map(card).join("")
+    : `<p class="empty-state">No deal candidates yet. Run a search or tune filters to build a focused shortlist.</p>`;
 }
 
-function renderLatestListings() {
+function renderDashboardOverview() {
   const priced = state.listings.filter((listing) => Number(listing.current_price || 0) >= 1);
   const clean = priced.filter((listing) => !listing.classification.is_filtered);
-  const listings = sortListings(clean.length ? clean : priced, document.getElementById("dashboard-sort").value).slice(0, state.density === "compact" ? 12 : 8);
-  document.getElementById("latest-listings").innerHTML = listings.length
-    ? listings.map(card).join("")
-    : `<p class="empty-state">No listings yet. Search from the bar above to pull Carousell results into the dashboard.</p>`;
+  const filtered = state.listings.filter((listing) => listing.classification.is_filtered);
+  const topDeals = sortListings(state.deals, "score").slice(0, 5);
+  const newestClean = sortListings(clean, "recent").slice(0, 3);
+  const filterRate = state.listings.length ? Math.round((filtered.length / state.listings.length) * 100) : 0;
+  const averageScore = clean.length
+    ? Math.round(clean.reduce((total, listing) => total + Number(listing.score?.deal_score || 0), 0) / clean.length)
+    : 0;
+
+  document.getElementById("dashboard-pipeline").innerHTML = [
+    ...topDeals.map((listing) => pipelineRow(listing, "Deal candidate", "good")),
+    ...newestClean.map((listing) => pipelineRow(listing, "Fresh clean post", "info"))
+  ].slice(0, 6).join("") || `<p class="empty-state compact-empty">No pipeline activity yet. Search Carousell to populate the dashboard.</p>`;
+
+  document.getElementById("dashboard-health").innerHTML = `
+    <div><span class="meta">Clean listings</span><strong>${clean.length}</strong><small>${filterRate}% filtered out</small></div>
+    <div><span class="meta">Avg deal score</span><strong>${averageScore}</strong><small>Across visible posts</small></div>
+    <div><span class="meta">Watch rules</span><strong>${state.filters.length}</strong><small>${state.sellers.length} sellers blocked</small></div>
+    <div><span class="meta">Training labels</span><strong>${state.labels.length}</strong><small>Model feedback examples</small></div>
+  `;
+
+  document.getElementById("dashboard-activity").innerHTML = state.searches.length
+    ? state.searches.slice(0, 5).map((search) => `
+      <button class="activity-row" type="button" data-repeat-search="${escapeHtml(search.query)}">
+        <span>${escapeHtml(search.query)}</span>
+        <small>${new Date(search.timestamp).toLocaleString()}</small>
+      </button>
+    `).join("")
+    : `<p class="meta">No searches yet.</p>`;
+}
+
+function pipelineRow(listing, label, tone) {
+  return `
+    <article class="pipeline-row">
+      <div>
+        <span class="badge ${tone}">${label}</span>
+        <strong>${escapeHtml(listing.title)}</strong>
+        <p class="meta">${formatMoney(listing.current_price)} · ${formatAge(listing)} · ${displayLocation(listing)}</p>
+      </div>
+      <button class="primary-action" data-view-listing="${listing.id}">Review</button>
+    </article>
+  `;
 }
 
 function renderListings() {
