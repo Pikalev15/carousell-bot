@@ -1,11 +1,22 @@
 import { parseMoney } from "./currency.js";
 
 const CHROME_PATHS = [
+  process.env.CHROME_PATH,
+  process.env.GOOGLE_CHROME_BIN,
+  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+  "/usr/bin/google-chrome",
+  "/usr/bin/google-chrome-stable",
+  "/opt/google/chrome/chrome",
+  "/usr/bin/chromium",
+  "/usr/bin/chromium-browser",
+  "/snap/bin/chromium",
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
   "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
-];
+].filter(Boolean);
 
 const BLOCKED_PRICE_CONTEXT = /\b(?:carousell|used|second hand|preowned|pre-owned|deposit|delivery|shipping|coupon|monthly|installment)\b/i;
 
@@ -92,7 +103,7 @@ async function newBrowserPage(options = {}) {
   }
 
   const executablePath = options.executablePath || (await findChromePath());
-  if (!executablePath) throw new Error("Chrome or Edge was not found on this PC.");
+  if (!executablePath) throw new Error("Chrome or Chromium was not found. Install Google Chrome in the Linux environment or set CHROME_PATH to your Chrome executable.");
 
   const browser = await chromium.launch({
     executablePath,
