@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 132" role="img" aria-labelledby="title">
+  <title id="title">Carousell</title>
+  <rect width="620" height="132" fill="none"/>
+  <g transform="translate(12 16)">
+    <path d="M50 0c27.6 0 50 22.4 50 50s-22.4 50-50 50S0 77.6 0 50 22.4 0 50 0Z" fill="#ff5a5f"/>
+    <path d="M31.8 34.2c5.3-9 16.9-12.1 25.9-6.8l21.9 12.8c9 5.3 12.1 16.9 6.8 25.9-5.3 9-16.9 12.1-25.9 6.8L38.6 60.1c-9-5.3-12.1-16.9-6.8-25.9Z" fill="#fff" opacity=".98"/>
+    <path d="M27.1 51.8c5.3-9 16.9-12.1 25.9-6.8l18.4 10.8c9 5.3 12.1 16.9 6.8 25.9-5.3 9-16.9 12.1-25.9 6.8L33.9 77.7c-9-5.3-12.1-16.9-6.8-25.9Z" fill="#ffe9ea" opacity=".95"/>
+  </g>
+  <text x="132" y="84" fill="#232832" font-family="Inter, Arial, sans-serif" font-size="68" font-weight="800" letter-spacing="-3">Carousell</text>
+</svg>
