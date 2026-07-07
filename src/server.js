@@ -5,12 +5,32 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { classifyListing, scoreDeal } from "./filterEngine.js";
 import { extractLocation, refreshCarousellListingDetails, searchCarousell } from "./carousellSearch.js";
 import { lookupMsrpFromGoogle } from "./msrpSearch.js";
-import { getState, readJson, writeJson } from "./store.js";
+import { maskTelegramConfig, notifyAlert, sendTelegramMessage, updateTelegramConfig } from "./notifier.js";
+import { SearchScheduler } from "./scheduler.js";
+import {
+  addActivity,
+  bulkUpsertListings,
+  createAlert,
+  deleteWatchedSearch,
+  getActivity,
+  getAlerts,
+  getPriceHistory,
+  getState,
+  getWatchedSearch,
+  getWatchedSearches,
+  markAlertsRead,
+  readJson,
+  updateWatchedSearchRun,
+  upsertListing,
+  upsertWatchedSearch,
+  writeJson
+} from "./store.js";
 import { labelPolarity, predictPreference, trainModel } from "./trainingModel.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
 const port = Number(process.env.PORT || 3000);
+const scheduler = new SearchScheduler(runWatchedSearch);
 
 const server = http.createServer(async (request, response) => {
   try {
@@ -31,6 +51,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   server.listen(port, () => {
     console.log(`Carousell Bot running at http://localhost:${port}`);
   });
+  scheduler.start().catch((error) => console.warn(`Scheduler failed to start: ${error.message}`));
 }
 
 export { server };
@@ -55,6 +76,11 @@ async function handleApi(request, response, url) {
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/listings/")) {
+    if (url.pathname.endsWith("/price-history")) {
+      const id = Number(url.pathname.split("/")[3]);
+      sendJson(response, 200, getPriceHistory(id));
+      return;
+    }
     const id = Number(url.pathname.split("/").pop());
     const state = await getState();
     const listing = buildListings(state, "", { includeFiltered: true }).find((item) => item.id === id);
@@ -80,7 +106,7 @@ async function handleApi(request, response, url) {
       ...listings[index],
       ...refreshed
     };
-    await writeJson("listings", listings);
+    upsertListing(listings[index]);
 
     const state = await getState();
     const listing = buildListings(state, "", { includeFiltered: true }).find((item) => item.id === id);
@@ -107,7 +133,7 @@ async function handleApi(request, response, url) {
     }
 
     await recordSearch(query, mode);
-    const webSearch = mode !== "local" ? await searchAndStoreWebResults(query, mode) : null;
+    const webSearch = mode !== "local" ? await searchAndStoreWebResults(query, mode, { alert: true }) : null;
 
     const state = await getState();
     sendJson(response, 200, {
@@ -132,6 +158,24 @@ async function handleApi(request, response, url) {
 
   if (request.method === "GET" && url.pathname === "/api/search/history") {
     sendJson(response, 200, await readJson("searches"));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/activity") {
+    sendJson(response, 200, getActivity(80));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/alerts") {
+    sendJson(response, 200, {
+      unread: getAlerts({ unreadOnly: true, limit: 200 }).length,
+      alerts: getAlerts({ limit: 80 })
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/alerts/mark-read") {
+    sendJson(response, 200, markAlertsRead());
     return;
   }
 
@@ -171,6 +215,13 @@ async function handleApi(request, response, url) {
 
   if (request.method === "GET" && url.pathname === "/api/sellers/blacklist") {
     sendJson(response, 200, await readJson("sellers"));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname.match(/^\/api\/sellers\/[^/]+\/reputation$/)) {
+    const sellerId = decodeURIComponent(url.pathname.split("/")[3]);
+    const state = await getState();
+    sendJson(response, 200, sellerReputation(sellerId, state.trainingModel));
     return;
   }
 
@@ -250,6 +301,69 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/watchlist") {
+    sendJson(response, 200, await getWatchedSearches());
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/watchlist") {
+    const body = await readBody(request);
+    sendJson(response, 201, upsertWatchedSearch(body));
+    return;
+  }
+
+  if (request.method === "PATCH" && url.pathname.startsWith("/api/watchlist/")) {
+    const id = Number(url.pathname.split("/").pop());
+    const existing = getWatchedSearch(id);
+    if (!existing) {
+      sendJson(response, 404, { error: "Watched search not found" });
+      return;
+    }
+    sendJson(response, 200, upsertWatchedSearch({ ...existing, ...(await readBody(request)), id }));
+    return;
+  }
+
+  if (request.method === "DELETE" && url.pathname.startsWith("/api/watchlist/")) {
+    const id = Number(url.pathname.split("/").pop());
+    sendJson(response, 200, { removed: deleteWatchedSearch(id) });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/scheduler") {
+    sendJson(response, 200, scheduler.status((await getState()).config));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/scheduler") {
+    sendJson(response, 200, await scheduler.configure(await readBody(request)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/scheduler/run") {
+    sendJson(response, 200, await scheduler.runNow());
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/config") {
+    const config = await readJson("config");
+    sendJson(response, 200, {
+      ...config,
+      telegram: maskTelegramConfig(config.telegram)
+    });
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/config/telegram") {
+    sendJson(response, 200, await updateTelegramConfig(await readBody(request)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/telegram/test") {
+    const result = await sendTelegramMessage("Carousell Bot test notification");
+    sendJson(response, 200, result);
+    return;
+  }
+
   if (request.method === "DELETE" && url.pathname.startsWith("/api/sellers/blacklist/")) {
     const sellerId = decodeURIComponent(url.pathname.split("/").pop());
     const sellers = await readJson("sellers");
@@ -305,6 +419,8 @@ function buildListings(state, query = "", options = {}) {
         ...normalizedListing,
         classification,
         training: prediction,
+        seller_reputation: sellerReputation(normalizedListing.seller_id, state.trainingModel),
+        price_history: getPriceHistory(normalizedListing.id),
         score
       };
     })
@@ -402,29 +518,37 @@ function applyTrainingOverrides(classification, label, prediction, model) {
 }
 
 async function recordSearch(query, mode) {
+  const timestamp = new Date().toISOString();
   const searches = await readJson("searches");
   searches.unshift({
     id: Date.now(),
     query,
     mode,
-    timestamp: new Date().toISOString()
+    timestamp
   });
   await writeJson("searches", searches.slice(0, 50));
+  addActivity({ type: "search", title: `Search: ${query}`, detail: mode, timestamp });
 }
 
-async function searchAndStoreWebResults(query, mode) {
+async function searchAndStoreWebResults(query, mode, options = {}) {
   try {
-    const webSearch = await searchCarousell(query, { limit: mode === "more" ? 40 : 24 });
+    const webSearch = await searchCarousell(query, { limit: mode === "more" ? 40 : 24, detailConcurrency: 2, detailJitterMs: 1200 });
     const listings = await readJson("listings");
     const existing = new Map(listings.map((listing, index) => [listing.carousell_id, { listing, index }]));
     const additions = [];
+    const priceDrops = [];
     let updated = 0;
     let nextId = Math.max(0, ...listings.map((item) => item.id || 0)) + 1;
 
     for (const listing of webSearch.results) {
       const match = existing.get(listing.carousell_id);
       if (match) {
+        const oldPrice = Number(match.listing.current_price || 0);
         listings[match.index] = mergeListingDetails(match.listing, listing);
+        const newPrice = Number(listings[match.index].current_price || 0);
+        if (oldPrice > 0 && newPrice > 0 && newPrice < oldPrice) {
+          priceDrops.push({ listing: listings[match.index], oldPrice, newPrice });
+        }
         updated += 1;
         continue;
       }
@@ -440,19 +564,82 @@ async function searchAndStoreWebResults(query, mode) {
     }
 
     if (additions.length > 0 || updated > 0) {
-      await writeJson("listings", listings);
+      bulkUpsertListings(listings);
     }
+
+    await handleSearchAlerts({ additions, priceDrops, query, options });
 
     return {
       source: "carousell-web",
       url: webSearch.url,
       added: additions.length,
-      updated
+      updated,
+      price_drops: priceDrops.length
     };
   } catch (error) {
     error.message = `Web search failed: ${error.message}`;
     throw error;
   }
+}
+
+async function runWatchedSearch(watch) {
+  const result = await searchAndStoreWebResults(watch.query, "web", { watch, alert: true });
+  updateWatchedSearchRun(watch.id);
+  return { watch_id: watch.id, query: watch.query, ...result };
+}
+
+async function handleSearchAlerts({ additions, priceDrops, query, options }) {
+  const state = await getState();
+  const threshold = Number(state.config.dealThreshold || 70);
+  const watch = options.watch || null;
+  const addedBuilt = buildListings({ ...state, listings: additions }, "", { includeFiltered: false });
+
+  for (const listing of addedBuilt) {
+    if (Number(listing.score?.deal_score || 0) < threshold) continue;
+    if (watch?.price_ceiling && Number(listing.current_price || 0) > Number(watch.price_ceiling)) continue;
+    await emitAlert({
+      type: watch ? "restock" : "new_deal",
+      title: listing.title,
+      message: `${formatMoney(listing.current_price)} | score ${listing.score.deal_score} | ${listing.location || "location not listed"}`,
+      listing_id: listing.id,
+      watch_id: watch?.id || null,
+      listing_url: listing.carousell_url
+    });
+  }
+
+  for (const drop of priceDrops) {
+    await emitAlert({
+      type: "price_drop",
+      title: drop.listing.title,
+      message: `${formatMoney(drop.oldPrice)} -> ${formatMoney(drop.newPrice)} from ${query}`,
+      listing_id: drop.listing.id,
+      watch_id: watch?.id || null,
+      listing_url: drop.listing.carousell_url
+    });
+  }
+}
+
+async function emitAlert(alert) {
+  const saved = createAlert(alert);
+  addActivity({ type: saved.type, title: saved.title, detail: saved.message, listing_id: saved.listing_id, watch_id: saved.watch_id });
+  await notifyAlert(saved);
+}
+
+function sellerReputation(sellerId, model) {
+  const stats = model?.seller_stats?.[sellerId] || { good: 0, bad: 0 };
+  const weight = Number(model?.seller_weights?.[sellerId] || 0);
+  const total = Number(stats.good || 0) + Number(stats.bad || 0);
+  const ratio = total ? Number(stats.good || 0) / total : 0.5;
+  const tone = total === 0 ? "neutral" : ratio >= 0.67 ? "good" : ratio <= 0.34 ? "bad" : "mixed";
+  return {
+    seller_id: sellerId,
+    good: Number(stats.good || 0),
+    bad: Number(stats.bad || 0),
+    total,
+    ratio,
+    weight,
+    tone
+  };
 }
 
 
@@ -487,6 +674,10 @@ function calculateMarketMedians(listings) {
       return [category, sorted[Math.floor(sorted.length / 2)]];
     })
   );
+}
+
+function formatMoney(value) {
+  return `S$${Number(value || 0).toLocaleString()}`;
 }
 
 async function serveStatic(urlPath, response) {

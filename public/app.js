@@ -5,6 +5,11 @@ const state = {
   sellers: [],
   labels: [],
   searches: [],
+  activity: [],
+  alerts: { unread: 0, alerts: [] },
+  watchlist: [],
+  scheduler: {},
+  config: {},
   stats: {},
   trainingModel: {},
   searchResults: [],
@@ -28,6 +33,14 @@ const api = {
   },
   async delete(path) {
     const response = await fetch(path, { method: "DELETE" });
+    return checkedJson(response);
+  },
+  async patch(path, body) {
+    const response = await fetch(path, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
     return checkedJson(response);
   }
 };
@@ -103,6 +116,45 @@ document.getElementById("retrain-model").addEventListener("click", async () => {
   state.trainingModel = await api.post("/api/training/retrain", {});
   await load();
 });
+document.getElementById("alerts-toggle").addEventListener("click", () => toggleAlerts(true));
+document.getElementById("alerts-close").addEventListener("click", () => toggleAlerts(false));
+document.getElementById("alerts-mark-read").addEventListener("click", async () => {
+  await api.post("/api/alerts/mark-read", {});
+  await load();
+  toggleAlerts(false);
+});
+document.getElementById("watchlist-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  await api.post("/api/watchlist", {
+    query: form.get("query"),
+    price_ceiling: form.get("price_ceiling"),
+    category: form.get("category"),
+    active: true
+  });
+  event.currentTarget.reset();
+  await load();
+  showToast("Watched search added");
+});
+document.getElementById("telegram-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  await api.post("/api/config/telegram", {
+    botToken: form.get("botToken"),
+    chatId: form.get("chatId"),
+    enabled: form.get("enabled") === "true"
+  });
+  event.currentTarget.reset();
+  await load();
+  showToast("Telegram settings saved");
+});
+document.getElementById("telegram-test").addEventListener("click", async (event) => {
+  setButtonBusy(event.currentTarget, "Sending");
+  const result = await api.post("/api/telegram/test", {});
+  event.currentTarget.removeAttribute("aria-busy");
+  event.currentTarget.textContent = "Send test message";
+  showToast(result.ok ? "Telegram test sent" : result.reason || "Telegram not configured");
+});
 
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
@@ -172,12 +224,45 @@ document.addEventListener("click", async (event) => {
     document.getElementById("search-input").value = button.dataset.repeatSearch;
     await runSearch("web");
   }
+
+  if (button.dataset.toggleWatch) {
+    await api.patch(`/api/watchlist/${button.dataset.toggleWatch}`, { active: button.dataset.active !== "true" });
+    await load();
+  }
+
+  if (button.dataset.deleteWatch) {
+    await api.delete(`/api/watchlist/${button.dataset.deleteWatch}`);
+    await load();
+  }
+
+  if (button.dataset.runWatch) {
+    const watch = state.watchlist.find((item) => String(item.id) === String(button.dataset.runWatch));
+    if (watch) {
+      document.getElementById("search-input").value = watch.query;
+      showView("search");
+      await runSearch("web");
+    }
+  }
+
+  if (button.dataset.schedulerToggle) {
+    const enabled = button.dataset.schedulerToggle !== "true";
+    await api.post("/api/scheduler", { enabled, intervalMinutes: state.scheduler.intervalMinutes || 30, jitterSeconds: state.scheduler.jitterSeconds || 45 });
+    await load();
+  }
+
+  if (button.dataset.schedulerRun) {
+    setButtonBusy(button, "Running");
+    await api.post("/api/scheduler/run", {});
+    button.removeAttribute("aria-busy");
+    button.textContent = "Run now";
+    await load();
+  }
 });
 
 async function load() {
   document.body.classList.add("is-loading");
   try {
-    const [listings, deals, filters, sellers, stats, labels, searches, trainingModel] = await Promise.all([
+    const [listings, deals, filters, sellers, stats, labels, searches, trainingModel, alerts, watchlist, activity, scheduler, config] = await Promise.all([
       api.get("/api/listings?include_filtered=true"),
       api.get("/api/deals"),
       api.get("/api/filters/blacklist"),
@@ -185,9 +270,14 @@ async function load() {
       api.get("/api/filters/stats"),
       api.get("/api/feedback/labels"),
       api.get("/api/search/history"),
-      api.get("/api/training/model")
+      api.get("/api/training/model"),
+      api.get("/api/alerts"),
+      api.get("/api/watchlist"),
+      api.get("/api/activity"),
+      api.get("/api/scheduler"),
+      api.get("/api/config")
     ]);
-    Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches, trainingModel });
+    Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches, trainingModel, alerts, watchlist, activity, scheduler, config });
     if (state.lastQuery) {
       state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, state.lastQuery)), "search");
     }
@@ -208,6 +298,11 @@ function renderAll() {
   renderFilters();
   renderTraining();
   renderSellers();
+  renderAlerts();
+  renderWatchlist();
+  renderActivity();
+  renderScheduler();
+  renderTelegram();
 }
 
 async function runSearch(mode) {
@@ -296,14 +391,9 @@ function renderDashboardOverview() {
     <div><span class="meta">Training labels</span><strong>${state.labels.length}</strong><small>Model feedback examples</small></div>
   `;
 
-  document.getElementById("dashboard-activity").innerHTML = state.searches.length
-    ? state.searches.slice(0, 5).map((search) => `
-      <button class="activity-row" type="button" data-repeat-search="${escapeHtml(search.query)}">
-        <span>${escapeHtml(search.query)}</span>
-        <small>${new Date(search.timestamp).toLocaleString()}</small>
-      </button>
-    `).join("")
-    : `<p class="meta">No searches yet.</p>`;
+  document.getElementById("dashboard-activity").innerHTML = state.activity.length
+    ? state.activity.slice(0, 6).map(activityRow).join("")
+    : `<p class="meta">No activity yet.</p>`;
 }
 
 function pipelineRow(listing, label, tone) {
@@ -389,6 +479,83 @@ function renderTraining() {
   `;
 }
 
+function renderAlerts() {
+  document.getElementById("alerts-count").textContent = state.alerts.unread || 0;
+  document.getElementById("alerts-count").classList.toggle("is-empty", !state.alerts.unread);
+  document.getElementById("alerts-list").innerHTML = state.alerts.alerts?.length
+    ? state.alerts.alerts.map((alert) => `
+      <article class="alert-item ${alert.read_at ? "" : "unread"}">
+        <span class="badge ${alert.type === "price_drop" ? "warn" : "good"}">${escapeHtml(String(alert.type || "deal").replaceAll("_", " "))}</span>
+        <strong>${escapeHtml(alert.title)}</strong>
+        <p class="meta">${escapeHtml(alert.message || "")}</p>
+        <small>${formatDateTime(alert.created_at)}</small>
+      </article>
+    `).join("")
+    : `<p class="empty-state compact-empty">No alerts yet.</p>`;
+}
+
+function renderWatchlist() {
+  document.getElementById("watchlist-list").innerHTML = state.watchlist.length
+    ? state.watchlist.map((watch) => `
+      <article class="watch-card">
+        <div>
+          <span class="badge ${watch.active ? "good" : "info"}">${watch.active ? "Active" : "Paused"}</span>
+          <h3>${escapeHtml(watch.query)}</h3>
+          <p class="meta">${watch.price_ceiling ? `Ceiling ${formatMoney(watch.price_ceiling)}` : "No price ceiling"}${watch.category ? ` / ${escapeHtml(watch.category)}` : ""}</p>
+          <p class="meta">Last run ${watch.last_run_at ? formatDateTime(watch.last_run_at) : "never"}</p>
+        </div>
+        <div class="actions">
+          <button class="primary-action" data-run-watch="${watch.id}">Run</button>
+          <button data-toggle-watch="${watch.id}" data-active="${watch.active}">${watch.active ? "Pause" : "Activate"}</button>
+          <button data-delete-watch="${watch.id}">Delete</button>
+        </div>
+      </article>
+    `).join("")
+    : `<p class="empty-state">No watched searches yet. Add one to let the scheduler look for restocks and deals.</p>`;
+}
+
+function renderActivity() {
+  document.getElementById("activity-timeline").innerHTML = state.activity.length
+    ? state.activity.map(activityRow).join("")
+    : `<p class="empty-state">No timeline entries yet.</p>`;
+}
+
+function renderScheduler() {
+  const scheduler = state.scheduler || {};
+  document.getElementById("scheduler-widget").innerHTML = `
+    <div>
+      <span class="badge ${scheduler.enabled ? "good" : "info"}">${scheduler.enabled ? "Scheduler active" : "Scheduler paused"}</span>
+      <strong>${scheduler.running ? "Running now" : scheduler.enabled ? "Watching saved searches" : "Paused"}</strong>
+      <p class="meta">Last ${scheduler.lastRunAt ? formatDateTime(scheduler.lastRunAt) : "never"} / next ${scheduler.nextRunAt ? formatDateTime(scheduler.nextRunAt) : "not scheduled"}</p>
+    </div>
+    <div class="actions">
+      <button class="primary-action" data-scheduler-run="true">Run now</button>
+      <button data-scheduler-toggle="${scheduler.enabled}">${scheduler.enabled ? "Pause" : "Activate"}</button>
+    </div>
+  `;
+}
+
+function renderTelegram() {
+  const telegram = state.config.telegram || {};
+  document.getElementById("telegram-status").innerHTML = `
+    <div><span class="meta">Status</span><strong>${telegram.enabled ? "Enabled" : "Paused"}</strong></div>
+    <div><span class="meta">Token</span><strong>${telegram.botTokenConfigured ? "Saved" : "Missing"}</strong></div>
+    <div><span class="meta">Chat</span><strong>${escapeHtml(telegram.chatId || "Missing")}</strong></div>
+    <div><span class="meta">Preview</span><strong>${escapeHtml(telegram.botTokenPreview || "-")}</strong></div>
+  `;
+}
+
+function activityRow(item) {
+  return `
+    <article class="timeline-item activity-row">
+      <span class="badge ${item.type === "price_drop" ? "warn" : item.type === "scrape_error" ? "bad" : "info"}">${escapeHtml(String(item.type || "event").replaceAll("_", " "))}</span>
+      <span>${escapeHtml(item.title || "Activity")}</span>
+      <p class="meta">${escapeHtml(item.detail || "")}</p>
+      <small>${formatDateTime(item.timestamp)}</small>
+    </article>
+  `;
+}
+
 function card(listing) {
   const classification = listing.classification;
   const label = state.labels.find((item) => item.listing_id === listing.id);
@@ -418,6 +585,8 @@ function card(listing) {
     listing.price_source === "description"
       ? `<p class="price-note">Price corrected from description. Card price was ${formatMoney(listing.display_price)}.</p>`
       : "";
+  const reputation = sellerBadge(listing.seller_reputation);
+  const sparkline = priceSparkline(listing.price_history);
 
   return `
     <article class="card" style="--entry-index: ${Number(listing.id || 0) % 12}; --score: ${dealScore}">
@@ -427,6 +596,7 @@ function card(listing) {
           <p class="title">${escapeHtml(listing.title)}</p>
           <p class="listing-meta">
             <span>${sellerMarkup(listing)}</span>
+            <span>${reputation}</span>
             <span>${listing.seller_rating} stars</span>
             <span>${formatAge(listing)}</span>
             <span>${displayLocation(listing)}</span>
@@ -436,6 +606,7 @@ function card(listing) {
       </div>
       <div class="price-row">
         <div class="price">${formatMoney(listing.current_price)}</div>
+        ${sparkline}
       </div>
       ${score}
       ${priceNote}
@@ -523,6 +694,41 @@ function listingImage(listing) {
   return urls.find((url) => url && !/\/profiles?\//i.test(url)) || "";
 }
 
+function sellerBadge(reputation = {}) {
+  const total = Number(reputation.total || 0);
+  const tone = total ? reputation.tone : "neutral";
+  const label = total ? `${Math.round(Number(reputation.ratio || 0) * 100)}% good` : "new seller";
+  return `<span class="seller-badge ${escapeHtml(tone)}">${escapeHtml(label)}</span>`;
+}
+
+function priceSparkline(history = []) {
+  const points = Array.isArray(history) ? history.slice(-12) : [];
+  if (points.length < 2) return `<svg class="sparkline empty" viewBox="0 0 92 28" aria-hidden="true"><path d="M4 22H88"/></svg>`;
+  const prices = points.map((point) => Number(point.price || 0));
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const spread = Math.max(1, max - min);
+  const coords = prices.map((price, index) => {
+    const x = 4 + (index / Math.max(1, prices.length - 1)) * 84;
+    const y = 24 - ((price - min) / spread) * 20;
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  });
+  const tone = prices[prices.length - 1] <= prices[0] ? "drop" : "rise";
+  return `
+    <svg class="sparkline ${tone}" viewBox="0 0 92 28" role="img" aria-label="Price history">
+      <polyline points="${coords.join(" ")}"></polyline>
+      <circle cx="${coords.at(-1).split(",")[0]}" cy="${coords.at(-1).split(",")[1]}" r="2.4"></circle>
+    </svg>
+  `;
+}
+
+function toggleAlerts(open) {
+  const panel = document.getElementById("alerts-panel");
+  document.getElementById("alerts-toggle").setAttribute("aria-expanded", String(open));
+  panel.classList.toggle("open", open);
+  panel.setAttribute("aria-hidden", String(!open));
+}
+
 function sortListings(listings, mode) {
   return [...listings].sort((a, b) => {
     if (mode === "price_low") return Number(a.current_price || 0) - Number(b.current_price || 0);
@@ -579,6 +785,10 @@ function getListingAgeHours(listing) {
     return Math.max(0, (Date.now() - new Date(listing.listed_at).getTime()) / 3600000);
   }
   return Number(listing.days_listed || 0) * 24;
+}
+
+function formatDateTime(value) {
+  return value ? new Date(value).toLocaleString() : "Never";
 }
 
 async function checkedJson(response) {

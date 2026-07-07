@@ -10,5 +10,17 @@
     "camera": 1200,
     "gaming": 520,
     "audio": 260
+  },
+  "telegram": {
+    "enabled": false,
+    "botToken": "",
+    "chatId": ""
+  },
+  "scheduler": {
+    "enabled": false,
+    "intervalMinutes": 30,
+    "jitterSeconds": 45,
+    "lastRunAt": null,
+    "nextRunAt": null
   }
 }

@@ -227,7 +227,8 @@ async function enrichListingDetails(browser, listings, limit, options = {}) {
       seen.add(listing.url);
       return true;
     });
-  const concurrency = Math.max(1, Math.min(4, Number(options.detailConcurrency || 4)));
+  const concurrency = Math.max(1, Math.min(3, Number(options.detailConcurrency || 2)));
+  const jitterMs = Math.max(0, Number(options.detailJitterMs || 0));
   const enriched = new Array(candidates.length);
   let cursor = 0;
 
@@ -235,12 +236,17 @@ async function enrichListingDetails(browser, listings, limit, options = {}) {
     while (cursor < candidates.length) {
       const index = cursor;
       cursor += 1;
+      if (jitterMs) await delay(Math.round(Math.random() * jitterMs));
       enriched[index] = await hydrateListingDetail(browser, candidates[index]);
     }
   }
 
   await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, worker));
   return enriched.filter(Boolean);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function hydrateListingDetail(browser, listing) {

@@ -7,12 +7,14 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node src/server.js",
+    "migrate": "node scripts/migrate-json-to-sqlite.js",
     "test": "node --test"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "better-sqlite3": "^12.11.1",
     "playwright-core": "^1.61.1"
   }
 }

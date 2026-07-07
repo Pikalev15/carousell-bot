@@ -345,6 +345,48 @@ nav {
   transform: translateX(0) scale(1);
 }
 
+.alert-bell {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  min-height: 0;
+  margin-top: auto;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.alert-bell svg {
+  width: 21px;
+  height: 21px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.alert-bell span {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 22px;
+  border: 2px solid #0d101c;
+  border-radius: 999px;
+  padding: 2px 5px;
+  color: var(--brand-contrast);
+  background: var(--brand);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.alert-bell span.is-empty {
+  opacity: 0;
+}
+
 main {
   position: relative;
   z-index: 1;
@@ -543,6 +585,28 @@ main {
 .activity-row span {
   color: var(--ink);
   font-weight: 800;
+}
+
+.scheduler-widget {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: -10px 0 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  background:
+    linear-gradient(120deg, var(--brand-soft), transparent 34%),
+    var(--surface);
+  box-shadow: var(--shadow-soft);
+  animation: widgetIn 220ms var(--ease-out) both;
+}
+
+.scheduler-widget strong {
+  display: block;
+  margin: 7px 0 4px;
+  color: var(--ink);
 }
 
 .deal-grid {
@@ -750,6 +814,67 @@ main {
   align-items: end;
   justify-content: space-between;
   gap: 12px;
+}
+
+.sparkline {
+  width: 92px;
+  height: 28px;
+  flex: 0 0 92px;
+}
+
+.sparkline polyline,
+.sparkline path {
+  fill: none;
+  stroke: var(--blue);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.sparkline.drop polyline,
+.sparkline.drop circle {
+  stroke: var(--brand);
+}
+
+.sparkline.rise polyline,
+.sparkline.rise circle {
+  stroke: var(--amber);
+}
+
+.sparkline circle {
+  fill: var(--surface);
+  stroke: var(--blue);
+  stroke-width: 2;
+}
+
+.seller-badge {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 1;
+}
+
+.seller-badge.good {
+  border-color: rgba(255, 90, 95, 0.35);
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.seller-badge.bad {
+  border-color: rgba(255, 107, 87, 0.35);
+  color: #ff9d90;
+  background: var(--red-soft);
+}
+
+.seller-badge.mixed,
+.seller-badge.neutral {
+  border-color: rgba(106, 156, 255, 0.35);
+  color: #a9c5ff;
+  background: var(--blue-soft);
 }
 
 .price {
@@ -1040,6 +1165,46 @@ select:focus {
   font-size: 19px;
 }
 
+.watchlist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 14px;
+}
+
+.watch-card {
+  display: grid;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent),
+    var(--surface);
+  box-shadow: var(--shadow-soft);
+  animation: cardIn 220ms var(--ease-out) both;
+}
+
+.watch-card h3 {
+  margin: 10px 0 7px;
+  color: var(--ink);
+  font-size: 19px;
+  text-transform: none;
+}
+
+.timeline {
+  display: grid;
+  gap: 10px;
+}
+
+.timeline-item {
+  position: relative;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent),
+    var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
 .row.compact {
   grid-template-columns: 1fr 90px 1fr auto;
 }
@@ -1172,6 +1337,62 @@ dialog::backdrop {
   transform: translateY(0) scale(1);
 }
 
+.alerts-panel {
+  position: fixed;
+  z-index: 30;
+  top: 0;
+  right: 0;
+  width: min(420px, 100vw);
+  height: 100vh;
+  border-left: 1px solid var(--line-strong);
+  color: var(--ink);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.045), transparent 220px),
+    var(--surface);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(100%);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 220ms var(--ease-out);
+}
+
+.alerts-panel.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.alerts-actions {
+  padding: 14px 16px 0;
+}
+
+.alerts-list {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.alert-item {
+  display: grid;
+  justify-items: start;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 13px;
+  background: var(--control-subtle);
+}
+
+.alert-item.unread {
+  border-color: color-mix(in srgb, var(--brand) 45%, var(--line));
+  background: linear-gradient(120deg, var(--brand-soft), transparent 55%), var(--control-subtle);
+}
+
+.alert-item strong {
+  color: var(--ink);
+}
+
 .compact-density .grid {
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 12px;
@@ -1221,6 +1442,17 @@ dialog::backdrop {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes widgetIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 
@@ -1303,7 +1535,16 @@ dialog::backdrop {
   }
 
   nav {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .alert-bell {
+    position: absolute;
+    top: 14px;
+    right: 18px;
+    width: 42px;
+    height: 42px;
+    margin: 0;
   }
 
   .nav-button {
@@ -1364,6 +1605,11 @@ dialog::backdrop {
     grid-template-columns: 1fr;
   }
 
+  .scheduler-widget {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
   .toolbar-actions,
   .section-bar {
     width: 100%;
@@ -1383,6 +1629,15 @@ dialog::backdrop {
     grid-template-columns: 1fr;
   }
 
+  .watchlist-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .price-row {
+    align-items: start;
+    flex-direction: column;
+  }
+
   .toast {
     right: 14px;
     bottom: 14px;
@@ -1395,5 +1650,16 @@ dialog::backdrop {
   .score-strip span + span {
     border-top: 0;
     border-left: 1px solid var(--line);
+  }
+}
+
+@keyframes widgetIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }

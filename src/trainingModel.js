@@ -58,7 +58,8 @@ export function trainModel(listings, labels) {
     negative_count: negative,
     bad_deal_count: dealStats.bad_deal_count,
     token_weights: calculateTokenWeights(tokenStats),
-    seller_weights: calculateSellerWeights(sellerStats)
+    seller_weights: calculateSellerWeights(sellerStats),
+    seller_stats: sellerStats
   };
 }
 

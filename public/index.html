@@ -36,11 +36,23 @@
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M8 9h8M8 13h6M8 17h4"/></svg>
             <span>Listings</span>
           </button>
+          <button class="nav-button" data-view="watchlist" aria-label="Watchlist">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 4h12v16l-6-3-6 3z"/><path d="M9 9h6"/></svg>
+            <span>Watchlist</span>
+          </button>
+          <button class="nav-button" data-view="activity" aria-label="Activity">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4l2-6 4 12 2-6h4"/></svg>
+            <span>Activity</span>
+          </button>
           <button class="nav-button" data-view="settings" aria-label="Filters">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/><circle cx="8" cy="7" r="1.8"/><circle cx="15" cy="12" r="1.8"/><circle cx="11" cy="17" r="1.8"/></svg>
             <span>Filters</span>
           </button>
         </nav>
+        <button id="alerts-toggle" class="alert-bell" type="button" aria-label="Open alerts" aria-expanded="false" aria-controls="alerts-panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
+          <span id="alerts-count">0</span>
+        </button>
       </aside>
 
       <main>
@@ -68,6 +80,7 @@
             </form>
           </div>
           <div id="stats" class="stats dashboard-stats"></div>
+          <div id="scheduler-widget" class="scheduler-widget"></div>
           <div class="dashboard-panels">
             <section class="dashboard-panel panel-primary">
               <div class="section-bar flush">
@@ -83,7 +96,7 @@
               <div id="dashboard-health" class="health-grid"></div>
             </section>
             <section class="dashboard-panel">
-              <h3>Recent Search Ops</h3>
+              <h3>Activity Timeline</h3>
               <div id="dashboard-activity" class="activity-list"></div>
             </section>
           </div>
@@ -166,6 +179,32 @@
           <div id="listing-list" class="grid"></div>
         </section>
 
+        <section id="watchlist" class="view">
+          <div class="toolbar">
+            <div>
+              <p class="eyebrow">Saved searches</p>
+              <h2>Watchlist</h2>
+            </div>
+          </div>
+          <form id="watchlist-form" class="form-row">
+            <input name="query" placeholder="Search to watch" required aria-label="Watched search query">
+            <input name="price_ceiling" type="number" min="0" step="1" placeholder="Max S$" aria-label="Price ceiling">
+            <input name="category" placeholder="Category" aria-label="Category">
+            <button>Add watch</button>
+          </form>
+          <div id="watchlist-list" class="watchlist-grid"></div>
+        </section>
+
+        <section id="activity" class="view">
+          <div class="toolbar">
+            <div>
+              <p class="eyebrow">Operational timeline</p>
+              <h2>Activity</h2>
+            </div>
+          </div>
+          <div id="activity-timeline" class="timeline"></div>
+        </section>
+
         <section id="settings" class="view">
           <div class="toolbar">
             <div>
@@ -189,11 +228,35 @@
             <div id="training-stats" class="training-stats"></div>
             <button id="retrain-model">Retrain from labels</button>
           </div>
+          <h3>Telegram Notifications</h3>
+          <form id="telegram-form" class="form-row">
+            <input name="botToken" type="password" placeholder="Bot token" autocomplete="off" aria-label="Telegram bot token">
+            <input name="chatId" placeholder="Chat ID" aria-label="Telegram chat ID">
+            <select name="enabled" aria-label="Telegram enabled">
+              <option value="true">Enabled</option>
+              <option value="false">Paused</option>
+            </select>
+            <button>Save Telegram</button>
+          </form>
+          <div class="training-panel">
+            <div id="telegram-status" class="training-stats"></div>
+            <button id="telegram-test" type="button">Send test message</button>
+          </div>
           <h3>Blocked Sellers</h3>
           <div id="sellers" class="table"></div>
         </section>
       </main>
     </div>
+    <aside id="alerts-panel" class="alerts-panel" aria-label="Recent alerts" aria-hidden="true">
+      <div class="modal-header">
+        <h3>Alerts</h3>
+        <button id="alerts-close" type="button">Close</button>
+      </div>
+      <div class="alerts-actions">
+        <button id="alerts-mark-read" type="button" class="primary-action">Mark read</button>
+      </div>
+      <div id="alerts-list" class="alerts-list"></div>
+    </aside>
     <dialog id="details-modal">
       <div class="modal-header">
         <h3 id="details-title">Listing</h3>
