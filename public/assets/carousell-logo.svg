@@ -1,13 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 132" role="img" aria-labelledby="title">
   <title id="title">Carousell</title>
-  <rect width="256" height="256" fill="none"/>
-  <path fill="#ff2636" d="M55 63h83v-8c0-9 7-16 16-16h23c9 0 16 7 16 16v8h8c22 0 40 18 40 40v81c0 22-18 40-40 40H55c-22 0-40-18-40-40v-81c0-22 18-40 40-40Z"/>
-  <path fill="#fff" fill-rule="evenodd" d="M125 87c13 0 25 4 35 11 5 4 6 11 2 16l-9 12c-4 5-11 6-16 3a35 35 0 1 0 0 58c5-3 12-2 16 3l9 12c4 5 3 12-2 16a70 70 0 1 1-35-131Z"/>
-  <g fill="#fff">
-    <rect x="165" y="96" width="16" height="36" rx="8" transform="rotate(37 173 114)"/>
-    <rect x="183" y="119" width="16" height="36" rx="8" transform="rotate(68 191 137)"/>
-    <rect x="190" y="150" width="16" height="36" rx="8" transform="rotate(90 198 168)"/>
-    <rect x="183" y="181" width="16" height="36" rx="8" transform="rotate(112 191 199)"/>
-    <rect x="165" y="204" width="16" height="36" rx="8" transform="rotate(143 173 222)"/>
+  <rect width="620" height="132" fill="none"/>
+  <g transform="translate(12 16)">
+    <path d="M50 0c27.6 0 50 22.4 50 50s-22.4 50-50 50S0 77.6 0 50 22.4 0 50 0Z" fill="#ff5a5f"/>
+    <path d="M31.8 34.2c5.3-9 16.9-12.1 25.9-6.8l21.9 12.8c9 5.3 12.1 16.9 6.8 25.9-5.3 9-16.9 12.1-25.9 6.8L38.6 60.1c-9-5.3-12.1-16.9-6.8-25.9Z" fill="#fff" opacity=".98"/>
+    <path d="M27.1 51.8c5.3-9 16.9-12.1 25.9-6.8l18.4 10.8c9 5.3 12.1 16.9 6.8 25.9-5.3 9-16.9 12.1-25.9 6.8L33.9 77.7c-9-5.3-12.1-16.9-6.8-25.9Z" fill="#ffe9ea" opacity=".95"/>
   </g>
+  <text x="132" y="84" fill="#232832" font-family="Inter, Arial, sans-serif" font-size="68" font-weight="800" letter-spacing="-3">Carousell</text>
 </svg>
