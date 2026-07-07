@@ -939,6 +939,10 @@ main {
   background: var(--blue-soft);
 }
 
+.badge.market {
+  text-transform: capitalize;
+}
+
 .badge-stack {
   display: flex;
   flex-wrap: wrap;
@@ -972,6 +976,44 @@ main {
 .score-strip strong {
   color: var(--ink);
   font-size: 15px;
+}
+
+.score-explanation {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
+}
+
+.score-explanation summary {
+  color: var(--soft);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.score-explanation p {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.explanation-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.explanation-chips span {
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--control-subtle);
+  font-size: 12px;
 }
 
 .score-meter {
@@ -1190,6 +1232,54 @@ select:focus {
   color: var(--ink);
   font-size: 19px;
   text-transform: none;
+}
+
+.preset-panel {
+  display: grid;
+  gap: 12px;
+  margin: 18px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+    var(--surface-2);
+  box-shadow: var(--shadow-soft);
+}
+
+.preset-panel h3 {
+  margin: 0;
+}
+
+.preset-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+}
+
+.preset-form textarea {
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: var(--ink);
+  background: var(--control);
+  font: inherit;
+}
+
+.preset-form textarea:focus {
+  outline: 2px solid var(--brand-soft);
+  border-color: rgba(255, 90, 95, 0.52);
+}
+
+.variant-list {
+  margin-top: 18px;
+}
+
+.variant-list h3 {
+  margin-top: 0;
 }
 
 .timeline {
@@ -2297,6 +2387,7 @@ dialog {
   .dashboard-panels,
   .training-stats,
   .watchlist-grid,
+  .preset-form,
   .grid {
     grid-template-columns: 1fr;
   }

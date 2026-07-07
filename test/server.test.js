@@ -9,7 +9,7 @@ test("serves core and roadmap API endpoints", async () => {
   process.env.CAROUSELL_DB_PATH = path.join(tempDir, "test.db");
   const cacheKey = Date.now();
   await assert.doesNotReject(() => import("../src/store.js"));
-  const { server } = await import(`../src/server.js?db=${cacheKey}`);
+  const { server, handleTelegramCommand } = await import(`../src/server.js?db=${cacheKey}`);
   const { closeDatabase } = await import("../src/store.js");
   const { notifyAlert } = await import("../src/notifier.js");
   await new Promise((resolve) => server.listen(0, resolve));
@@ -31,6 +31,11 @@ test("serves core and roadmap API endpoints", async () => {
     const priceHistory = await fetch(`${base}/api/listings/1/price-history`).then((response) => response.json());
     const reputation = await fetch(`${base}/api/sellers/seller-100/reputation`).then((response) => response.json());
     const watch = await post(`${base}/api/watchlist`, { query: "lian li", price_ceiling: 120, category: "pc parts", active: true });
+    const presets = await patch(`${base}/api/config/category-presets`, { name: "Computers & Tech", terms: "gpu, rtx, custom nas" });
+    const categoryWatch = await post(`${base}/api/watchlist`, { query: "Computers & Tech", active: true });
+    const callbackLabel = await handleTelegramCommand({ type: "callback", action: "bad_deal", listingId: 1, id: "cb-1", chatId: "42" });
+    const callbackBlock = await handleTelegramCommand({ type: "callback", action: "block", listingId: 1, id: "cb-2", chatId: "42" });
+    const callbackWatch = await handleTelegramCommand({ type: "callback", action: "watch", listingId: 1, id: "cb-3", chatId: "42" });
     const pausedWatch = await patch(`${base}/api/watchlist/${watch.id}`, { active: false });
     const watchlist = await fetch(`${base}/api/watchlist`).then((response) => response.json());
     const scheduler = await post(`${base}/api/scheduler`, { enabled: false, intervalMinutes: 15, jitterSeconds: 2 });
@@ -48,6 +53,9 @@ test("serves core and roadmap API endpoints", async () => {
     assert.equal(listings.some((listing) => listing.current_price === 0), false);
     assert.ok(allListings.length >= listings.length);
     assert.equal(allListings.some((listing) => listing.location === "Carousell SG"), false);
+    assert.ok(allListings.every((listing) => listing.market_insight));
+    assert.ok(allListings.every((listing) => listing.duplicate_group_id));
+    assert.ok(allListings.some((listing) => listing.score?.explanation?.components));
     assert.equal(pricedListings.every((listing) => listing.current_price >= 900 && listing.current_price <= 1200), true);
     assert.equal(recentListings.every((listing) => (listing.listed_age_minutes ?? listing.days_listed * 1440) <= 1440), true);
     assert.equal(search.query, "MacBook");
@@ -61,6 +69,13 @@ test("serves core and roadmap API endpoints", async () => {
     assert.equal(Array.isArray(priceHistory), true);
     assert.equal(reputation.seller_id, "seller-100");
     assert.equal(watch.query, "lian li");
+    assert.deepEqual(presets["Computers & Tech"], ["gpu", "rtx", "custom nas"]);
+    assert.equal(categoryWatch.kind, "category");
+    assert.ok(categoryWatch.terms.includes("gpu"));
+    assert.ok(categoryWatch.terms.includes("custom nas"));
+    assert.match(callbackLabel, /Marked bad deal/);
+    assert.match(callbackBlock, /Blocked/);
+    assert.match(callbackWatch, /Watching similar/);
     assert.equal(pausedWatch.active, false);
     assert.equal(watchlist.some((item) => item.id === watch.id), true);
     assert.equal(scheduler.enabled, false);

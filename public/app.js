@@ -14,6 +14,7 @@ const state = {
   trainingModel: {},
   searchResults: [],
   lastQuery: "",
+  searchJob: null,
   theme: localStorage.getItem("theme") || "dark",
   density: localStorage.getItem("density") || "comfortable"
 };
@@ -148,6 +149,24 @@ document.getElementById("alerts-scrim").addEventListener("click", () => toggleAl
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") toggleAlerts(false);
 });
+document.addEventListener(
+  "error",
+  (event) => {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement) || !image.closest(".listing-visual")) return;
+    const fallback = image.dataset.fallbackSrc;
+    if (fallback && image.src !== fallback) {
+      image.dataset.fallbackSrc = "";
+      image.src = fallback;
+      return;
+    }
+    const visual = image.closest(".listing-visual");
+    const initial = visual.dataset.imageInitial || "?";
+    visual.classList.add("empty");
+    visual.innerHTML = `<span>${escapeHtml(initial)}</span>`;
+  },
+  true
+);
 document.getElementById("alerts-mark-read").addEventListener("click", async () => {
   try {
     await api.post("/api/alerts/mark-read", {});
@@ -173,6 +192,24 @@ document.getElementById("watchlist-form").addEventListener("submit", async (even
     showToast("Watched search added");
   } catch (error) {
     showToast(`Watchlist update failed: ${error.message}`, "error");
+  }
+});
+document.getElementById("preset-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button");
+  setButtonBusy(button);
+  try {
+    const form = new FormData(event.currentTarget);
+    await api.patch("/api/config/category-presets", {
+      name: "Computers & Tech",
+      terms: form.get("terms")
+    });
+    await load();
+    showToast("Preset updated");
+  } catch (error) {
+    showToast(`Preset update failed: ${error.message}`, "error");
+  } finally {
+    resetButtonBusy(button);
   }
 });
 document.getElementById("telegram-form").addEventListener("submit", async (event) => {
@@ -407,15 +444,44 @@ async function runSearch(mode) {
     document.getElementById("search-input").value = query;
     const source = payload.source === "carousell-web" ? "Carousell web" : payload.source;
     const added = payload.added ? ` Added ${payload.added} new listings.` : "";
-    const updated = payload.updated ? ` Updated ${payload.updated} existing listings with full details.` : "";
+    const updated = payload.updated ? ` Updated ${payload.updated} existing listings.` : "";
     const warning = payload.warning ? ` ${payload.warning}` : "";
     document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}" via ${source}.${added}${updated}${warning}`;
+    if (payload.hydration_job?.id) {
+      state.searchJob = payload.hydration_job;
+      pollSearchJob(payload.hydration_job.id, query);
+    }
     showToast(payload.added || payload.updated ? `Added ${payload.added || 0}, updated ${payload.updated || 0}` : "Search complete");
   } catch (error) {
     document.getElementById("search-summary").textContent = `Search failed: ${error.message}`;
     showToast(`Search failed: ${error.message}`, "error");
   } finally {
     resetButtonBusy(submit);
+  }
+}
+
+async function pollSearchJob(id, query) {
+  try {
+    const job = await api.get(`/api/search/jobs/${id}`);
+    state.searchJob = job;
+    const done = Number(job.completed || 0);
+    const total = Number(job.total || 0);
+    if (job.status === "running" || job.status === "queued") {
+      document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}". Enriching details ${done}/${total}...`;
+      setTimeout(() => pollSearchJob(id, query), 1800);
+      return;
+    }
+    if (job.status === "complete") {
+      await load();
+      state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, query)), "search");
+      renderSearch();
+      document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}". Details enriched ${done}/${total}.`;
+      showToast("Listing details enriched");
+      return;
+    }
+    document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}". Detail enrichment failed: ${job.error || "unknown error"}`;
+  } catch (error) {
+    showToast(`Hydration status failed: ${error.message}`, "error");
   }
 }
 
@@ -493,11 +559,11 @@ function renderListings() {
     if (filter === "filtered") return listing.classification.is_filtered;
     return true;
   });
-  document.getElementById("listing-list").innerHTML = sortListings(listings, document.getElementById("listing-sort").value).map(card).join("");
+  document.getElementById("listing-list").innerHTML = collapseDuplicateGroups(sortListings(listings, document.getElementById("listing-sort").value)).map(card).join("");
 }
 
 function renderSearch() {
-  const results = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
+  const results = collapseDuplicateGroups(sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value));
   document.getElementById("search-results").innerHTML = results.length
     ? results.map(card).join("")
     : `<p class="empty-state">No visible listings in this price range. Try raising the max, lowering the min, or searching a more specific phrase.</p>`;
@@ -572,6 +638,9 @@ function renderAlerts() {
 }
 
 function renderWatchlist() {
+  const terms = state.config.categoryPresets?.["Computers & Tech"] || [];
+  const presetForm = document.getElementById("preset-form");
+  if (presetForm) presetForm.elements.terms.value = terms.join(", ");
   document.getElementById("watchlist-list").innerHTML = state.watchlist.length
     ? state.watchlist.map((watch) => `
       <article class="watch-card">
@@ -664,8 +733,9 @@ function card(listing) {
   const label = state.labels.find((item) => item.listing_id === listing.id);
   const dealScore = Number(listing.score?.deal_score || 0);
   const visualUrl = listingImage(listing);
+  const fallbackUrl = originalListingImage(listing);
   const visual = visualUrl
-    ? `<div class="listing-visual"><img src="${escapeHtml(visualUrl)}" alt="" loading="lazy"></div>`
+    ? `<div class="listing-visual" data-image-initial="${escapeHtml(String(listing.title || "?").trim().slice(0, 1).toUpperCase() || "?")}"><img src="${escapeHtml(visualUrl)}" data-fallback-src="${escapeHtml(fallbackUrl)}" alt="" loading="lazy"></div>`
     : `<div class="listing-visual empty"><span>${escapeHtml(String(listing.title || "?").trim().slice(0, 1).toUpperCase() || "?")}</span></div>`;
   const badge = classification.is_filtered
     ? `<span class="badge bad">${classification.post_type}</span>`
@@ -690,6 +760,9 @@ function card(listing) {
       : "";
   const reputation = sellerBadge(listing.seller_reputation);
   const sparkline = priceSparkline(listing.price_history);
+  const market = marketBadge(listing.market_insight);
+  const duplicate = Number(listing.duplicate_count || 1) > 1 ? `<span class="badge info">${Number(listing.duplicate_count) - 1} similar</span>` : "";
+  const explanation = scoreExplanation(listing);
 
   return `
     <article class="card" style="--entry-index: ${Number(listing.id || 0) % 12}; --score: ${dealScore}">
@@ -705,7 +778,7 @@ function card(listing) {
             <span>${displayLocation(listing)}</span>
           </p>
         </div>
-        <div class="badge-stack">${badge}${labelBadge}</div>
+        <div class="badge-stack">${badge}${market}${duplicate}${labelBadge}</div>
       </div>
       <div class="price-row">
         <div class="price">${formatMoney(listing.current_price)}</div>
@@ -713,6 +786,7 @@ function card(listing) {
       </div>
       ${score}
       ${priceNote}
+      ${explanation}
       ${reasons}
       <p class="meta" data-msrp-result="${listing.id}"></p>
       <div class="actions">
@@ -733,6 +807,9 @@ function card(listing) {
 }
 
 function openDetails(listing) {
+  const variants = state.listings
+    .filter((item) => listing.duplicate_group_id && item.duplicate_group_id === listing.duplicate_group_id && item.id !== listing.id)
+    .slice(0, 6);
   document.getElementById("details-title").textContent = listing.title;
   document.getElementById("details-body").innerHTML = `
     <div class="detail-grid">
@@ -741,8 +818,22 @@ function openDetails(listing) {
       <p><strong>Location</strong><span>${displayLocation(listing)}</span></p>
       <p><strong>Condition</strong><span>${escapeHtml(listing.condition)}</span></p>
       <p><strong>Classification</strong><span>${escapeHtml(listing.classification.post_type)}</span></p>
+      <p><strong>Market</strong><span>${marketInsightText(listing.market_insight)}</span></p>
+      <p><strong>Why this score?</strong><span>${escapeHtml(listing.score?.explanation?.summary || "No score explanation available.")}</span></p>
       <p class="description-row"><strong>Description</strong><span>${escapeHtml(listing.description || "No description captured yet. Search this listing again to refresh details.")}</span></p>
     </div>
+    ${variants.length ? `
+      <div class="variant-list">
+        <h3>${variants.length} similar listing${variants.length === 1 ? "" : "s"}</h3>
+        ${variants.map((variant) => `
+          <div class="row compact">
+            <strong>${escapeHtml(variant.title)}</strong>
+            <span class="meta">${formatMoney(variant.current_price)} / ${displayLocation(variant)}</span>
+            <button data-open-url="${escapeHtml(variant.carousell_url)}">Open</button>
+          </div>
+        `).join("")}
+      </div>
+    ` : ""}
   `;
   document.getElementById("details-modal").showModal();
 }
@@ -750,6 +841,21 @@ function openDetails(listing) {
 function matchesQuery(listing, query) {
   const text = `${listing.title} ${listing.description} ${listing.category}`.toLowerCase();
   return text.includes(query.toLowerCase());
+}
+
+function collapseDuplicateGroups(listings) {
+  const seen = new Set();
+  return listings.filter((listing) => {
+    const groupId = listing.duplicate_group_id;
+    if (!groupId || listing.duplicate_count <= 1) return true;
+    if (listing.duplicate_role === "primary" && !seen.has(groupId)) {
+      seen.add(groupId);
+      return true;
+    }
+    if (seen.has(groupId)) return false;
+    seen.add(groupId);
+    return true;
+  });
 }
 
 function applyPriceFilters(listings, scope) {
@@ -795,6 +901,42 @@ function displayLocation(listing) {
 function listingImage(listing) {
   const urls = Array.isArray(listing.image_urls) ? listing.image_urls : [];
   return urls.find((url) => url && !/\/profiles?\//i.test(url)) || "";
+}
+
+function originalListingImage(listing) {
+  const urls = Array.isArray(listing.original_image_urls) ? listing.original_image_urls : [];
+  return urls.find((url) => url && !/\/profiles?\//i.test(url)) || "";
+}
+
+function marketBadge(insight = {}) {
+  const rating = insight.rating || "unknown";
+  if (rating === "unknown") return "";
+  const tone = rating === "great" ? "good" : rating === "overpriced" || rating === "suspicious_low" ? "warn" : "info";
+  return `<span class="badge market ${escapeHtml(tone)}">${escapeHtml(rating.replaceAll("_", " "))}</span>`;
+}
+
+function marketInsightText(insight = {}) {
+  if (!insight || insight.rating === "unknown") return "Not enough local comps yet";
+  const delta = insight.price_delta_percent === null || insight.price_delta_percent === undefined ? "" : ` / ${insight.price_delta_percent}% vs median`;
+  return `${insight.rating.replaceAll("_", " ")} / median ${formatMoney(insight.median_price)} / ${insight.sample_size} comps${delta}`;
+}
+
+function scoreExplanation(listing) {
+  const explanation = listing.score?.explanation;
+  if (!explanation) return "";
+  const components = explanation.components || {};
+  return `
+    <details class="score-explanation">
+      <summary>Why this score?</summary>
+      <p>${escapeHtml(explanation.summary || "")}</p>
+      <div class="explanation-chips">
+        <span>Seller ${Number(components.seller || 0)}</span>
+        <span>Age ${Number(components.age || 0)}</span>
+        <span>Detail ${Number(components.detail || 0)}</span>
+        <span>Penalty ${Number(components.penalty || 0)}</span>
+      </div>
+    </details>
+  `;
 }
 
 function sellerBadge(reputation = {}) {

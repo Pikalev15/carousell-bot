@@ -20,7 +20,7 @@ const CHROME_PATHS = [
 ].filter(Boolean);
 
 export async function searchCarousell(query, options = {}) {
-  const limit = Number(options.limit || 24);
+  const limit = options.limit === "all" ? Infinity : Number(options.limit || 24);
   const searchUrl = `${CAROUSELL_BASE_URL}/search/${encodeURIComponent(query)}?addRecent=true&canChangeKeyword=true&includeSuggestions=true&searchId=${Date.now()}`;
   const pageData = await fetchWithBrowser(searchUrl, { ...options, limit });
   const found = new Map();
@@ -34,12 +34,38 @@ export async function searchCarousell(query, options = {}) {
     if (!found.has(listing.carousell_id)) found.set(listing.carousell_id, listing);
   }
 
-  const listings = [...found.values()].slice(0, limit);
+  const listings = Number.isFinite(limit) ? [...found.values()].slice(0, limit) : [...found.values()];
   return {
     source: "carousell",
     url: searchUrl,
     results: listings
   };
+}
+
+export async function hydrateCarousellListings(listings, options = {}) {
+  const candidates = Array.isArray(listings) ? listings.filter((listing) => normalizeUrl(listing.carousell_url || listing.url)) : [];
+  if (candidates.length === 0) return [];
+  const { browser } = await newBrowserPage(options);
+  try {
+    const concurrency = Math.max(1, Math.min(3, Number(options.concurrency || 2)));
+    const jitterMs = Math.max(0, Number(options.jitterMs || 0));
+    const hydrated = new Array(candidates.length);
+    let cursor = 0;
+
+    async function worker() {
+      while (cursor < candidates.length) {
+        const index = cursor;
+        cursor += 1;
+        if (jitterMs) await delay(Math.round(Math.random() * jitterMs));
+        hydrated[index] = await hydrateStoredListingDetail(browser, candidates[index]);
+      }
+    }
+
+    await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, worker));
+    return hydrated.filter(Boolean);
+  } finally {
+    await browser.close();
+  }
 }
 
 export async function refreshCarousellListingDetails(listing) {
@@ -79,9 +105,9 @@ async function fetchWithBrowser(url, options = {}) {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
     await page.waitForSelector('a[href*="/p/"], script#__NEXT_DATA__', { timeout: 20000 }).catch(() => {});
-    let domListings = await page.evaluate(() => {
+    let domListings = await page.evaluate((anchorLimit) => {
       const anchors = [...document.querySelectorAll('a[href*="/p/"]')];
-      return anchors.slice(0, 80).map((anchor) => {
+      return anchors.slice(0, anchorLimit).map((anchor) => {
         let node = anchor;
         let cardText = anchor.innerText || "";
         for (let depth = 0; depth < 5 && node?.parentElement; depth += 1) {
@@ -126,7 +152,9 @@ async function fetchWithBrowser(url, options = {}) {
         return urls;
       }
     });
-    domListings = await enrichListingDetails(browser, domListings, options.limit || 24, options);
+    if (options.hydrateDetails !== false) {
+      domListings = await enrichListingDetails(browser, domListings, options.limit || 24, options);
+    }
     return {
       html: await page.content(),
       domListings
@@ -348,6 +376,52 @@ async function hydrateListingDetail(browser, listing) {
   } finally {
     await page?.close().catch(() => {});
   }
+}
+
+async function hydrateStoredListingDetail(browser, listing) {
+  let page;
+  try {
+    page = await browser.newPage({
+      locale: "en-SG",
+      timezoneId: "Asia/Singapore",
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+    });
+    await page.goto(normalizeUrl(listing.carousell_url || listing.url), { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForLoadState("networkidle", { timeout: 9000 }).catch(() => {});
+    await expandDetailSections(page);
+    const details = await readDetailPage(page);
+    const seller = extractSellerFromDetails(details, listing.seller_name);
+    const description = extractDescription(details.bodyText, details.metaDescription, listing.title);
+    const detailPrice = extractRealPriceFromDescription(`${description}\n${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`);
+    return {
+      ...listing,
+      description: description || listing.description || "",
+      seller_name: seller.name || listing.seller_name,
+      seller_id: seller.id || listing.seller_id,
+      seller_url: seller.url || listing.seller_url || "",
+      location: extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks) || listing.location || "",
+      current_price: detailPrice || listing.current_price,
+      price_source: detailPrice && detailPrice !== listing.current_price ? "description" : listing.price_source || "card",
+      image_urls: mergeImageUrls(details.imageUrls, listing.image_urls),
+      details_scraped_at: new Date().toISOString(),
+      scraped_at: new Date().toISOString()
+    };
+  } catch {
+    return {
+      ...listing,
+      hydration_error_at: new Date().toISOString()
+    };
+  } finally {
+    await page?.close().catch(() => {});
+  }
+}
+
+function resolveAnchorLimit(options = {}) {
+  const configured = Number(options.anchorLimit || options.cardLimit || 0);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  if (options.limit === "all" || options.limit === Infinity) return 500;
+  const limit = Number(options.limit || 80);
+  return Number.isFinite(limit) && limit > 0 ? Math.max(80, limit) : 500;
 }
 
 function extractSellerFromDetails(details, fallbackName = "") {

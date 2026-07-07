@@ -162,6 +162,9 @@ export function upsertWatchedSearch(input) {
     query: String(input.query || existing?.query || "").trim(),
     price_ceiling: input.price_ceiling === "" || input.price_ceiling === null || input.price_ceiling === undefined ? null : Number(input.price_ceiling),
     category: String(input.category || existing?.category || "").trim(),
+    kind: input.kind || existing?.kind || "query",
+    terms: normalizeStringList(input.terms ?? existing?.terms),
+    urls: normalizeStringList(input.urls ?? existing?.urls),
     active: input.active === undefined ? existing?.active ?? true : Boolean(input.active),
     created_at: existing?.created_at || now,
     updated_at: now,
@@ -214,6 +217,7 @@ export function createAlert(input) {
   if (!db) return upsertJsonAlert(input);
   const now = new Date().toISOString();
   const next = {
+    ...input,
     id: input.id || Date.now(),
     type: input.type || "deal",
     title: input.title || "Carousell alert",
@@ -249,6 +253,7 @@ export function markAlertsRead() {
 export function addActivity(input) {
   if (!db) return appendJsonActivity(input);
   const next = {
+    ...input,
     id: input.id || Date.now(),
     type: input.type || "event",
     title: input.title || "Activity",
@@ -606,6 +611,9 @@ function upsertJsonWatchedSearch(input) {
     query: String(input.query || existing?.query || "").trim(),
     price_ceiling: input.price_ceiling === "" || input.price_ceiling === null || input.price_ceiling === undefined ? null : Number(input.price_ceiling),
     category: String(input.category || existing?.category || "").trim(),
+    kind: input.kind || existing?.kind || "query",
+    terms: normalizeStringList(input.terms ?? existing?.terms),
+    urls: normalizeStringList(input.urls ?? existing?.urls),
     active: input.active === undefined ? existing?.active ?? true : Boolean(input.active),
     created_at: existing?.created_at || now,
     updated_at: now,
@@ -618,10 +626,22 @@ function upsertJsonWatchedSearch(input) {
   return next;
 }
 
+function normalizeStringList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || "").trim()).filter(Boolean);
+  if (typeof value === "string") {
+    return value
+      .split(/[\n,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 function upsertJsonAlert(input) {
   const alerts = readJsonFile("alerts", []);
   const now = new Date().toISOString();
   const next = {
+    ...input,
     id: input.id || Date.now(),
     type: input.type || "deal",
     title: input.title || "Carousell alert",
@@ -661,8 +681,21 @@ function parsePayload(value) {
 }
 
 function withConfigDefaults(config) {
+  const defaultCategoryPresets = {
+    "Computers & Tech": ["gaming pc", "gpu", "rtx", "lian li", "pc case", "monitor", "ssd", "motherboard"]
+  };
   return {
     ...(config || {}),
+    categoryPresets: {
+      ...defaultCategoryPresets,
+      ...(config?.categoryPresets || {})
+    },
+    imageCache: {
+      enabled: true,
+      maxAgeDays: 14,
+      maxFiles: 500,
+      ...(config?.imageCache || {})
+    },
     telegram: {
       botToken: "",
       chatId: "",
