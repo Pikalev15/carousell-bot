@@ -64,6 +64,7 @@ export async function refreshCarousellListingDetails(listing) {
       location: location || cleanLocation(listing.location) || "",
       current_price: detailPrice || listing.current_price,
       price_source: detailPrice && detailPrice !== listing.current_price ? "description" : listing.price_source || "card",
+      image_urls: mergeImageUrls(details.imageUrls, listing.image_urls),
       scraped_at: new Date().toISOString()
     };
   } finally {
@@ -88,15 +89,42 @@ async function fetchWithBrowser(url, options = {}) {
           const text = node.innerText || "";
           if (text.length > cardText.length && text.length < 1200) cardText = text;
         }
-        const image = node?.querySelector?.("img")?.src || anchor.querySelector?.("img")?.src || "";
+        const imageUrls = collectDomImageUrls(node || anchor, anchor);
         return {
           title: anchor.innerText || cardText,
           cardText,
           price: cardText,
           url: anchor.href,
-          imageUrls: image ? [image] : []
+          imageUrls
         };
       });
+
+      function collectDomImageUrls(...roots) {
+        const urls = [];
+        const add = (value) => {
+          if (!value) return;
+          for (const candidate of String(value).split(",")) {
+            const url = candidate.trim().split(/\s+/)[0].replace(/^['"]|['"]$/g, "");
+            if (url && !urls.includes(url)) urls.push(url);
+          }
+        };
+        for (const root of roots) {
+          if (!root) continue;
+          root.querySelectorAll?.("img, source").forEach((image) => {
+            add(image.currentSrc);
+            add(image.src);
+            add(image.srcset);
+            add(image.getAttribute("data-src"));
+            add(image.getAttribute("data-original"));
+            add(image.getAttribute("data-lazy-src"));
+          });
+          root.querySelectorAll?.("[style*='background']").forEach((element) => {
+            const match = String(element.getAttribute("style") || "").match(/url\((['"]?)(.*?)\1\)/i);
+            add(match?.[2]);
+          });
+        }
+        return urls;
+      }
     });
     domListings = await enrichListingDetails(browser, domListings, options.limit || 24, options);
     return {
@@ -176,7 +204,7 @@ function collectListingsFromAnchors(html, found, query) {
     const text = stripTags(match[2]).replace(/\s+/g, " ").trim();
     const price = parsePrice(text);
     const title = text.replace(/S\$\s?[\d,]+.*/i, "").trim();
-    const normalized = normalizeListing({ title, price, url: href, query });
+    const normalized = normalizeListing({ title, price, url: href, query, imageUrls: extractImageUrlsFromHtml(match[2]) });
     if (normalized) found.set(normalized.carousell_id, normalized);
   }
 }
@@ -212,7 +240,7 @@ function normalizeListing(input) {
     current_price: price > 99999 ? 0 : price,
     display_price: cardPrice,
     price_source: detailPrice ? "description" : "card",
-    image_urls: input.imageUrls || [],
+    image_urls: mergeImageUrls(input.imageUrls),
     carousell_url: url,
     scraped_at: new Date().toISOString()
   };
@@ -272,6 +300,7 @@ async function hydrateListingDetail(browser, listing) {
       sellerUrl: seller.url,
       description,
       location: extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks),
+      imageUrls: mergeImageUrls(details.imageUrls, listing.imageUrls),
       price: extractRealPriceFromDescription(`${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`) || listing.price
     };
   } catch {
@@ -481,7 +510,50 @@ async function readDetailPage(page) {
       text: anchor.textContent?.trim() || "",
       href: anchor.href || ""
     }));
-    return { bodyText, metaDescription, jsonLd, profileLinks, locationLinks };
+    const imageUrls = collectPageImageUrls();
+    return { bodyText, metaDescription, jsonLd, profileLinks, locationLinks, imageUrls };
+
+    function collectPageImageUrls() {
+      const urls = [];
+      const add = (value) => {
+        if (!value) return;
+        for (const candidate of String(value).split(",")) {
+          const url = candidate.trim().split(/\s+/)[0].replace(/^['"]|['"]$/g, "");
+          if (url && !urls.includes(url)) urls.push(url);
+        }
+      };
+      document.querySelectorAll("img, source").forEach((image) => {
+        add(image.currentSrc);
+        add(image.src);
+        add(image.srcset);
+        add(image.getAttribute("data-src"));
+        add(image.getAttribute("data-original"));
+        add(image.getAttribute("data-lazy-src"));
+      });
+      document.querySelectorAll("meta[property='og:image'], meta[name='twitter:image']").forEach((meta) => add(meta.getAttribute("content")));
+      document.querySelectorAll("[style*='background']").forEach((element) => {
+        const match = String(element.getAttribute("style") || "").match(/url\((['"]?)(.*?)\1\)/i);
+        add(match?.[2]);
+      });
+      try {
+        const json = JSON.parse((document.querySelector("#__NEXT_DATA__")?.textContent || "{}").trim());
+        visit(json);
+      } catch {}
+      return urls;
+
+      function visit(value) {
+        if (!value || urls.length >= 12) return;
+        if (typeof value === "string") {
+          add(value);
+          return;
+        }
+        if (Array.isArray(value)) {
+          value.forEach(visit);
+          return;
+        }
+        if (typeof value === "object") Object.values(value).forEach(visit);
+      }
+    }
   });
 }
 

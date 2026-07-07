@@ -247,6 +247,7 @@
         </section>
       </main>
     </div>
+    <div id="alerts-scrim" class="alerts-scrim" hidden></div>
     <aside id="alerts-panel" class="alerts-panel" aria-label="Recent alerts" aria-hidden="true">
       <div class="modal-header">
         <h3>Alerts</h3>
@@ -264,7 +265,7 @@
       </div>
       <div id="details-body"></div>
     </dialog>
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="false"></div>
     <script src="/app.js"></script>
   </body>
 </html>

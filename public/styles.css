@@ -101,7 +101,7 @@ button {
   background: var(--control);
   cursor: pointer;
   transition:
-    transform 140ms var(--ease-out),
+    transform 100ms var(--ease-out),
     border-color 160ms var(--ease-out),
     background 160ms var(--ease-out),
     color 160ms var(--ease-out);
@@ -119,6 +119,7 @@ button:active {
 
 button[aria-busy="true"] {
   pointer-events: none;
+  opacity: 0.82;
   color: var(--muted);
   border-color: var(--line);
   background: var(--control-subtle);
@@ -126,8 +127,8 @@ button[aria-busy="true"] {
 
 button[aria-busy="true"]::after {
   display: inline-block;
-  width: 0.85em;
-  height: 0.85em;
+  width: 0.62em;
+  height: 0.62em;
   margin-left: 8px;
   border: 2px solid currentColor;
   border-right-color: transparent;
@@ -428,11 +429,11 @@ main {
   align-items: end;
   gap: 18px;
   margin: -6px 0 18px;
-  border: 1px solid rgba(22, 167, 122, 0.24);
+  border: 1px solid rgba(255, 90, 95, 0.24);
   border-radius: 18px;
   padding: 22px;
   background:
-    linear-gradient(120deg, rgba(22, 167, 122, 0.18), transparent 34%),
+    linear-gradient(120deg, rgba(255, 90, 95, 0.18), transparent 34%),
     linear-gradient(135deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
     var(--surface);
   box-shadow: var(--shadow-soft);
@@ -1312,29 +1313,95 @@ dialog::backdrop {
   background: rgba(255, 255, 255, 0.025);
 }
 
-.toast {
+.toast-root {
   position: fixed;
   right: 20px;
   bottom: 20px;
-  z-index: 10;
-  max-width: min(360px, calc(100vw - 40px));
-  border: 1px solid var(--line-strong);
-  border-radius: 8px;
-  padding: 11px 13px;
-  color: var(--ink);
-  background: rgba(17, 19, 23, 0.96);
-  box-shadow: var(--shadow);
-  opacity: 0;
+  z-index: 60;
+  display: grid;
+  gap: 8px;
+  width: min(390px, calc(100vw - 32px));
   pointer-events: none;
-  transform: translateY(10px) scale(0.98);
+}
+
+.toast {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--line-strong) 78%, transparent);
+  border-radius: 14px;
+  padding: 12px;
+  color: var(--ink);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent),
+    color-mix(in srgb, var(--surface) 96%, #000);
+  box-shadow: var(--shadow-soft);
+  opacity: 0;
+  pointer-events: auto;
+  transform: translateY(12px) scale(0.98);
   transition:
     opacity 180ms var(--ease-out),
     transform 180ms var(--ease-out);
 }
 
-.toast.visible {
+.toast[data-state="open"] {
   opacity: 1;
   transform: translateY(0) scale(1);
+}
+
+.toast[data-state="closing"] {
+  opacity: 0;
+  transform: translateY(8px) scale(0.98);
+}
+
+.toast p {
+  margin: 0;
+  color: var(--soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.toast-mark {
+  width: 9px;
+  height: 9px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--brand);
+  box-shadow: 0 0 0 4px var(--brand-soft);
+}
+
+.toast-error .toast-mark {
+  background: var(--red);
+  box-shadow: 0 0 0 4px var(--red-soft);
+}
+
+.toast-warn .toast-mark {
+  background: var(--amber);
+  box-shadow: 0 0 0 4px var(--amber-soft);
+}
+
+.toast button {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0;
+  color: var(--muted);
+  background: transparent;
+}
+
+.alerts-scrim {
+  position: fixed;
+  z-index: 29;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.46);
+  opacity: 0;
+  transition: opacity 180ms var(--ease-out);
+}
+
+.alerts-scrim.open {
+  opacity: 1;
 }
 
 .alerts-panel {
@@ -1453,6 +1520,133 @@ dialog::backdrop {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* Motion and drawer polish inspired by Sonner/Vaul interaction patterns. */
+.alerts-panel {
+  z-index: 30;
+  border-radius: 24px 0 0 24px;
+  transform: translateX(104%);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 240ms var(--ease-out);
+}
+
+.alerts-panel.open {
+  transform: translateX(0);
+}
+
+.modal-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface) 98%, transparent), color-mix(in srgb, var(--surface) 88%, transparent)),
+    var(--surface);
+  backdrop-filter: blur(16px);
+}
+
+.telegram-credentials {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+  border-radius: 16px;
+  padding: 14px;
+  background:
+    linear-gradient(135deg, var(--brand-soft), transparent 46%),
+    var(--control-subtle);
+}
+
+.telegram-credentials.saved {
+  background:
+    linear-gradient(135deg, var(--blue-soft), transparent 46%),
+    var(--control-subtle);
+}
+
+.telegram-credentials.error {
+  border-color: color-mix(in srgb, var(--red) 40%, var(--line));
+  background:
+    linear-gradient(135deg, var(--red-soft), transparent 46%),
+    var(--control-subtle);
+}
+
+.credential-header,
+.credential-grid,
+.credential-line {
+  display: flex;
+  align-items: center;
+}
+
+.credential-header {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.credential-grid {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.credential-line {
+  flex: 1 1 210px;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+}
+
+.credential-line strong {
+  display: block;
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credential-icon {
+  display: inline-grid;
+  flex: 0 0 32px;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: var(--brand);
+  background: var(--brand-soft);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+@media (max-width: 480px) {
+  .toast-root {
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+  }
+
+  .alerts-panel {
+    top: auto;
+    bottom: 0;
+    width: 100vw;
+    height: min(78vh, 720px);
+    border: 1px solid var(--line-strong);
+    border-bottom: 0;
+    border-radius: 22px 22px 0 0;
+    transform: translateY(104%);
+  }
+
+  .alerts-panel.open {
+    transform: translateY(0);
+  }
+
+  .credential-line {
+    flex-basis: 100%;
   }
 }
 
@@ -1638,7 +1832,7 @@ dialog::backdrop {
     flex-direction: column;
   }
 
-  .toast {
+  .toast-root {
     right: 14px;
     bottom: 14px;
   }
@@ -1653,7 +1847,7 @@ dialog::backdrop {
   }
 }
 
-/* Visual redesign: signal-desk palette and denser market intelligence layout. */
+/* Visual redesign: coral-led deal intelligence palette and denser market layout. */
 :root {
   --bg: #080a0d;
   --surface: #11151a;
@@ -1667,11 +1861,11 @@ dialog::backdrop {
   --soft: #c4d0d8;
   --line: #26313b;
   --line-strong: #3d4c59;
-  --brand: #5ef2c0;
-  --brand-hover: #8af7d3;
-  --brand-contrast: #03120d;
-  --brand-soft: rgba(94, 242, 192, 0.14);
-  --brand-glow: rgba(94, 242, 192, 0.22);
+  --brand: #ff5a5f;
+  --brand-hover: #ff767a;
+  --brand-contrast: #2a080b;
+  --brand-soft: rgba(255, 90, 95, 0.15);
+  --brand-glow: rgba(255, 90, 95, 0.22);
   --blue: #7aa7ff;
   --blue-soft: rgba(122, 167, 255, 0.14);
   --red: #ff6b75;
@@ -1684,23 +1878,23 @@ dialog::backdrop {
 }
 
 :root[data-theme="light"] {
-  --bg: #f5f7f5;
+  --bg: #f7f3f1;
   --surface: #ffffff;
-  --surface-2: #f1f6f4;
-  --surface-3: #e7eeee;
+  --surface-2: #fff2ef;
+  --surface-3: #f2e4df;
   --control: #ffffff;
-  --control-hover: #edf5f2;
-  --control-subtle: #f7faf8;
-  --ink: #16201f;
-  --muted: #697976;
-  --soft: #32433f;
-  --line: #d8e3df;
-  --line-strong: #bccdc7;
-  --brand: #0b9f76;
-  --brand-hover: #087c5e;
+  --control-hover: #fff0ec;
+  --control-subtle: #fff8f6;
+  --ink: #241b1f;
+  --muted: #786c70;
+  --soft: #41363a;
+  --line: #ead9d3;
+  --line-strong: #d5bdb5;
+  --brand: #ff5a5f;
+  --brand-hover: #e7484e;
   --brand-contrast: #ffffff;
-  --brand-soft: rgba(11, 159, 118, 0.12);
-  --brand-glow: rgba(11, 159, 118, 0.18);
+  --brand-soft: rgba(255, 90, 95, 0.13);
+  --brand-glow: rgba(255, 90, 95, 0.18);
   --blue: #386fd6;
   --blue-soft: rgba(56, 111, 214, 0.11);
   --red: #d6495a;
@@ -1715,7 +1909,7 @@ dialog::backdrop {
 body {
   font-family: Inter, ui-sans-serif, Segoe UI, Arial, sans-serif;
   background:
-    linear-gradient(135deg, rgba(94, 242, 192, 0.095), transparent 28%),
+    linear-gradient(135deg, rgba(255, 90, 95, 0.095), transparent 28%),
     linear-gradient(220deg, rgba(122, 167, 255, 0.07), transparent 34%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 360px),
     var(--bg);
@@ -1730,12 +1924,12 @@ body {
   padding: 24px 14px;
   border-right: 1px solid rgba(139, 160, 170, 0.16);
   background:
-    linear-gradient(180deg, rgba(94, 242, 192, 0.1), transparent 210px),
+    linear-gradient(180deg, rgba(255, 90, 95, 0.1), transparent 210px),
     linear-gradient(180deg, #10161d, #090c11);
 }
 
 .brand-mark {
-  filter: drop-shadow(0 12px 22px rgba(94, 242, 192, 0.12));
+  filter: drop-shadow(0 12px 22px rgba(255, 90, 95, 0.14));
 }
 
 .brand-mark span:nth-child(1) {
@@ -1770,18 +1964,18 @@ nav {
 
 .nav-button.active {
   width: 82px;
-  color: #06120f;
-  border-color: rgba(94, 242, 192, 0.7);
+  color: var(--brand-contrast);
+  border-color: rgba(255, 90, 95, 0.7);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.32), transparent),
     var(--brand);
-  box-shadow: 0 16px 34px rgba(94, 242, 192, 0.2);
+  box-shadow: 0 16px 34px rgba(255, 90, 95, 0.2);
 }
 
 .nav-button.active::before {
   right: 9px;
   top: 9px;
-  background: #06120f;
+  background: var(--brand-contrast);
   box-shadow: none;
 }
 
@@ -1832,7 +2026,7 @@ h2 {
   border-radius: 26px;
   padding: clamp(18px, 2vw, 28px);
   background:
-    linear-gradient(115deg, rgba(94, 242, 192, 0.18), transparent 38%),
+    linear-gradient(115deg, rgba(255, 90, 95, 0.18), transparent 38%),
     linear-gradient(235deg, rgba(122, 167, 255, 0.12), transparent 45%),
     var(--surface);
 }
@@ -1880,7 +2074,7 @@ select {
   border-radius: 20px;
   padding: 18px;
   background:
-    linear-gradient(150deg, rgba(94, 242, 192, 0.11), transparent 55%),
+    linear-gradient(150deg, rgba(255, 90, 95, 0.11), transparent 55%),
     var(--surface);
 }
 
@@ -1904,7 +2098,7 @@ select {
 .scheduler-widget {
   padding: 18px;
   background:
-    linear-gradient(100deg, rgba(94, 242, 192, 0.14), transparent 38%),
+    linear-gradient(100deg, rgba(255, 90, 95, 0.14), transparent 38%),
     linear-gradient(265deg, rgba(246, 199, 107, 0.1), transparent 48%),
     var(--surface);
 }
@@ -1964,7 +2158,7 @@ select {
 
 .listing-visual.empty {
   background:
-    linear-gradient(135deg, rgba(94, 242, 192, 0.13), transparent),
+    linear-gradient(135deg, rgba(255, 90, 95, 0.13), transparent),
     linear-gradient(315deg, rgba(122, 167, 255, 0.16), transparent),
     var(--control-subtle);
 }
@@ -2027,7 +2221,7 @@ select {
 .alerts-panel {
   width: min(460px, 100vw);
   background:
-    linear-gradient(180deg, rgba(94, 242, 192, 0.1), transparent 240px),
+    linear-gradient(180deg, rgba(255, 90, 95, 0.1), transparent 240px),
     var(--surface);
 }
 

@@ -18,30 +18,28 @@ const state = {
   density: localStorage.getItem("density") || "comfortable"
 };
 
+const API_TIMEOUT_MS = 15000;
+
 const api = {
   async get(path) {
-    const response = await fetch(path);
-    return checkedJson(response);
+    return request(path);
   },
   async post(path, body) {
-    const response = await fetch(path, {
+    return request(path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body)
     });
-    return checkedJson(response);
   },
   async delete(path) {
-    const response = await fetch(path, { method: "DELETE" });
-    return checkedJson(response);
+    return request(path, { method: "DELETE" });
   },
   async patch(path, body) {
-    const response = await fetch(path, {
+    return request(path, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body)
     });
-    return checkedJson(response);
   }
 };
 
@@ -50,11 +48,16 @@ document.querySelectorAll(".nav-button").forEach((button) => {
 });
 
 document.getElementById("refresh").addEventListener("click", async (event) => {
-  setButtonBusy(event.currentTarget, "Refreshing");
-  await load();
-  event.currentTarget.removeAttribute("aria-busy");
-  event.currentTarget.textContent = "Refresh";
-  showToast("Dashboard updated");
+  const button = event.currentTarget;
+  setButtonBusy(button);
+  try {
+    await load();
+    showToast("Dashboard updated");
+  } catch (error) {
+    showToast(`Refresh failed: ${error.message}`, "error");
+  } finally {
+    resetButtonBusy(button);
+  }
 });
 document.getElementById("theme-toggle").addEventListener("click", () => {
   state.theme = state.theme === "dark" ? "light" : "dark";
@@ -70,11 +73,15 @@ document.getElementById("density-toggle").addEventListener("click", () => {
 });
 document.getElementById("dashboard-search-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const query = document.getElementById("dashboard-query").value.trim();
-  if (!query) return;
-  document.getElementById("search-input").value = query;
-  showView("search");
-  await runSearch("web");
+  try {
+    const query = document.getElementById("dashboard-query").value.trim();
+    if (!query) return;
+    document.getElementById("search-input").value = query;
+    showView("search");
+    await runSearch("web");
+  } catch (error) {
+    showToast(`Search failed: ${error.message}`, "error");
+  }
 });
 document.getElementById("listing-filter").addEventListener("change", renderListings);
 document.getElementById("listing-min-price").addEventListener("input", renderListings);
@@ -93,10 +100,15 @@ document.getElementById("details-close").addEventListener("click", () => documen
 
 document.getElementById("filter-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  await api.post("/api/filters/blacklist", Object.fromEntries(form.entries()));
-  event.currentTarget.reset();
-  await load();
+  const formElement = event.currentTarget;
+  try {
+    const form = new FormData(formElement);
+    await api.post("/api/filters/blacklist", Object.fromEntries(form.entries()));
+    formElement.reset();
+    await load();
+  } catch (error) {
+    showToast(`Filter update failed: ${error.message}`, "error");
+  }
 });
 
 document.getElementById("search-form").addEventListener("submit", async (event) => {
@@ -113,47 +125,76 @@ document.getElementById("search-more").addEventListener("click", async () => {
   await runSearch("more");
 });
 document.getElementById("retrain-model").addEventListener("click", async () => {
-  state.trainingModel = await api.post("/api/training/retrain", {});
-  await load();
+  try {
+    state.trainingModel = await api.post("/api/training/retrain", {});
+    await load();
+    showToast("Training model updated");
+  } catch (error) {
+    showToast(`Retrain failed: ${error.message}`, "error");
+  }
 });
 document.getElementById("alerts-toggle").addEventListener("click", () => toggleAlerts(true));
 document.getElementById("alerts-close").addEventListener("click", () => toggleAlerts(false));
+document.getElementById("alerts-scrim").addEventListener("click", () => toggleAlerts(false));
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") toggleAlerts(false);
+});
 document.getElementById("alerts-mark-read").addEventListener("click", async () => {
-  await api.post("/api/alerts/mark-read", {});
-  await load();
-  toggleAlerts(false);
+  try {
+    await api.post("/api/alerts/mark-read", {});
+    await load();
+    toggleAlerts(false);
+  } catch (error) {
+    showToast(`Could not mark alerts read: ${error.message}`, "error");
+  }
 });
 document.getElementById("watchlist-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  await api.post("/api/watchlist", {
-    query: form.get("query"),
-    price_ceiling: form.get("price_ceiling"),
-    category: form.get("category"),
-    active: true
-  });
-  event.currentTarget.reset();
-  await load();
-  showToast("Watched search added");
+  const formElement = event.currentTarget;
+  try {
+    const form = new FormData(formElement);
+    await api.post("/api/watchlist", {
+      query: form.get("query"),
+      price_ceiling: form.get("price_ceiling"),
+      category: form.get("category"),
+      active: true
+    });
+    formElement.reset();
+    await load();
+    showToast("Watched search added");
+  } catch (error) {
+    showToast(`Watchlist update failed: ${error.message}`, "error");
+  }
 });
 document.getElementById("telegram-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  await api.post("/api/config/telegram", {
-    botToken: form.get("botToken"),
-    chatId: form.get("chatId"),
-    enabled: form.get("enabled") === "true"
-  });
-  event.currentTarget.reset();
-  await load();
-  showToast("Telegram settings saved");
+  const formElement = event.currentTarget;
+  try {
+    const form = new FormData(formElement);
+    await api.post("/api/config/telegram", {
+      botToken: form.get("botToken"),
+      chatId: form.get("chatId"),
+      enabled: form.get("enabled") === "true"
+    });
+    formElement.reset();
+    await load();
+    showToast("Telegram settings saved");
+  } catch (error) {
+    showToast(`Telegram settings failed: ${error.message}`, "error");
+  }
 });
 document.getElementById("telegram-test").addEventListener("click", async (event) => {
-  setButtonBusy(event.currentTarget, "Sending");
-  const result = await api.post("/api/telegram/test", {});
-  event.currentTarget.removeAttribute("aria-busy");
-  event.currentTarget.textContent = "Send test message";
-  showToast(result.ok ? "Telegram test sent" : result.reason || "Telegram not configured");
+  const button = event.currentTarget;
+  setButtonBusy(button);
+  try {
+    const result = await api.post("/api/telegram/test", {});
+    await load();
+    showToast(result.ok ? "Telegram test sent" : result.error || result.reason || "Telegram not configured", result.ok ? "success" : "error");
+  } catch (error) {
+    showToast(`Telegram test failed: ${error.message}`, "error");
+  } finally {
+    resetButtonBusy(button);
+  }
 });
 
 document.addEventListener("click", async (event) => {
@@ -161,101 +202,127 @@ document.addEventListener("click", async (event) => {
   if (!button) return;
 
   if (button.dataset.blockSeller) {
-    await api.post(`/api/sellers/blacklist/${encodeURIComponent(button.dataset.blockSeller)}`, {
-      seller_name: button.dataset.sellerName,
-      reason: "Blocked from listing card"
-    });
-    await load();
+    return runAction(async () => {
+      await api.post(`/api/sellers/blacklist/${encodeURIComponent(button.dataset.blockSeller)}`, {
+        seller_name: button.dataset.sellerName,
+        reason: "Blocked from listing card"
+      });
+      await load();
+      showToast("Seller blocked");
+    }, "Block seller failed");
   }
 
   if (button.dataset.deleteFilter) {
-    await api.delete(`/api/filters/blacklist/${button.dataset.deleteFilter}`);
-    await load();
+    return runAction(async () => {
+      await api.delete(`/api/filters/blacklist/${button.dataset.deleteFilter}`);
+      await load();
+      showToast("Filter deleted");
+    }, "Delete filter failed");
   }
 
   if (button.dataset.deleteSeller) {
-    await api.delete(`/api/sellers/blacklist/${encodeURIComponent(button.dataset.deleteSeller)}`);
-    await load();
+    return runAction(async () => {
+      await api.delete(`/api/sellers/blacklist/${encodeURIComponent(button.dataset.deleteSeller)}`);
+      await load();
+      showToast("Seller unblocked");
+    }, "Delete seller failed");
   }
 
   if (button.dataset.label) {
-    setButtonBusy(button, "Saving");
-    await api.post("/api/feedback/label", {
-      listing_id: Number(button.dataset.listingId),
-      rating: button.dataset.label,
-      asked_price: Number(button.dataset.price)
-    });
-    await load();
-    showToast(`Marked as ${button.dataset.label.replace("_", " ")}`);
+    return runBusyAction(button, async () => {
+      await api.post("/api/feedback/label", {
+        listing_id: Number(button.dataset.listingId),
+        rating: button.dataset.label,
+        asked_price: Number(button.dataset.price)
+      });
+      await load();
+      showToast(`Marked as ${button.dataset.label.replace("_", " ")}`);
+    }, "Label failed");
   }
 
   if (button.dataset.msrp) {
-    setButtonBusy(button, "Checking");
-    const result = await api.post("/api/msrp/lookup", {
-      title: button.dataset.title,
-      price: Number(button.dataset.price)
-    });
-    document.querySelectorAll(`[data-msrp-result="${button.dataset.msrp}"]`).forEach((target) => {
-      const evidence = result.evidence ? ` | ${result.evidence.slice(0, 120)}` : "";
-      target.textContent = `MSRP ${formatMoney(result.msrp)} (${result.currency || "SGD"}) | ${result.discount_percent}% off | ${result.source}${evidence}`;
-    });
-    button.removeAttribute("aria-busy");
-    button.textContent = "MSRP";
+    return runBusyAction(button, async () => {
+      const result = await api.post("/api/msrp/lookup", {
+        title: button.dataset.title,
+        price: Number(button.dataset.price)
+      });
+      document.querySelectorAll(`[data-msrp-result="${button.dataset.msrp}"]`).forEach((target) => {
+        const evidence = result.evidence ? ` | ${result.evidence.slice(0, 120)}` : "";
+        target.textContent = `MSRP ${formatMoney(result.msrp)} (${result.currency || "SGD"}) | ${result.discount_percent}% off | ${result.source}${evidence}`;
+      });
+    }, "MSRP lookup failed");
   }
 
   if (button.dataset.viewListing) {
-    const listing = await api.get(`/api/listings/${button.dataset.viewListing}`);
-    openDetails(listing);
+    return runAction(async () => {
+      const listing = await api.get(`/api/listings/${button.dataset.viewListing}`);
+      openDetails(listing);
+    }, "Listing details failed");
   }
 
   if (button.dataset.refreshDetails) {
-    setButtonBusy(button, "Refreshing");
-    const listing = await api.post(`/api/listings/${button.dataset.refreshDetails}/refresh-details`, {});
-    await load();
-    openDetails(listing);
-    showToast("Listing details refreshed");
+    return runBusyAction(button, async () => {
+      const listing = await api.post(`/api/listings/${button.dataset.refreshDetails}/refresh-details`, {});
+      await load();
+      openDetails(listing);
+      showToast("Listing details refreshed");
+    }, "Refresh details failed");
   }
 
   if (button.dataset.openUrl) {
     window.open(button.dataset.openUrl, "_blank", "noopener");
+    return undefined;
   }
 
   if (button.dataset.repeatSearch) {
-    document.getElementById("search-input").value = button.dataset.repeatSearch;
-    await runSearch("web");
+    return runAction(async () => {
+      document.getElementById("search-input").value = button.dataset.repeatSearch;
+      await runSearch("web");
+    }, "Repeat search failed");
   }
 
   if (button.dataset.toggleWatch) {
-    await api.patch(`/api/watchlist/${button.dataset.toggleWatch}`, { active: button.dataset.active !== "true" });
-    await load();
+    return runAction(async () => {
+      await api.patch(`/api/watchlist/${button.dataset.toggleWatch}`, { active: button.dataset.active !== "true" });
+      await load();
+      showToast("Watchlist updated");
+    }, "Watchlist update failed");
   }
 
   if (button.dataset.deleteWatch) {
-    await api.delete(`/api/watchlist/${button.dataset.deleteWatch}`);
-    await load();
+    return runAction(async () => {
+      await api.delete(`/api/watchlist/${button.dataset.deleteWatch}`);
+      await load();
+      showToast("Watched search deleted");
+    }, "Delete watch failed");
   }
 
   if (button.dataset.runWatch) {
-    const watch = state.watchlist.find((item) => String(item.id) === String(button.dataset.runWatch));
-    if (watch) {
-      document.getElementById("search-input").value = watch.query;
-      showView("search");
-      await runSearch("web");
-    }
+    return runAction(async () => {
+      const watch = state.watchlist.find((item) => String(item.id) === String(button.dataset.runWatch));
+      if (watch) {
+        document.getElementById("search-input").value = watch.query;
+        showView("search");
+        await runSearch("web");
+      }
+    }, "Watched search failed");
   }
 
   if (button.dataset.schedulerToggle) {
-    const enabled = button.dataset.schedulerToggle !== "true";
-    await api.post("/api/scheduler", { enabled, intervalMinutes: state.scheduler.intervalMinutes || 30, jitterSeconds: state.scheduler.jitterSeconds || 45 });
-    await load();
+    return runAction(async () => {
+      const enabled = button.dataset.schedulerToggle !== "true";
+      await api.post("/api/scheduler", { enabled, intervalMinutes: state.scheduler.intervalMinutes || 30, jitterSeconds: state.scheduler.jitterSeconds || 45 });
+      await load();
+      showToast(enabled ? "Scheduler activated" : "Scheduler paused");
+    }, "Scheduler update failed");
   }
 
   if (button.dataset.schedulerRun) {
-    setButtonBusy(button, "Running");
-    await api.post("/api/scheduler/run", {});
-    button.removeAttribute("aria-busy");
-    button.textContent = "Run now";
-    await load();
+    return runBusyAction(button, async () => {
+      await api.post("/api/scheduler/run", {});
+      await load();
+      showToast("Scheduler run complete");
+    }, "Scheduler run failed");
   }
 });
 
@@ -284,6 +351,7 @@ async function load() {
     renderAll();
   } catch (error) {
     document.getElementById("search-summary").textContent = `Could not reach the local server: ${error.message}`;
+    showToast(`Server unavailable: ${error.message}`, "error");
   } finally {
     document.body.classList.remove("is-loading");
   }
@@ -336,9 +404,9 @@ async function runSearch(mode) {
     showToast(payload.added || payload.updated ? `Added ${payload.added || 0}, updated ${payload.updated || 0}` : "Search complete");
   } catch (error) {
     document.getElementById("search-summary").textContent = `Search failed: ${error.message}`;
+    showToast(`Search failed: ${error.message}`, "error");
   } finally {
-    submit.removeAttribute("aria-busy");
-    submit.textContent = mode === "more" ? "Search more" : "Search web";
+    resetButtonBusy(submit);
   }
 }
 
@@ -537,15 +605,36 @@ function renderScheduler() {
 
 function renderTelegram() {
   const telegram = state.config.telegram || {};
-  const status = telegram.status || (telegram.verifiedAt ? "verified" : telegram.botTokenConfigured ? "saved" : "missing");
-  const statusLabel = status === "verified" ? "Verified working" : status === "error" ? "Connection error" : status === "saved" ? "Saved, not verified" : "Not configured";
+  const hasCredentials = Boolean(telegram.botTokenConfigured && telegram.chatId);
+  const status = telegram.status === "error" ? "error" : telegram.verifiedAt ? "verified" : hasCredentials ? "saved" : "missing";
+  const statusLabel =
+    status === "verified"
+      ? "Verified working"
+      : status === "error"
+        ? "Connection error"
+        : status === "saved"
+          ? "Configured, not verified"
+          : "Not configured";
   const error = telegram.lastError ? `<div class="telegram-error"><span class="meta">Last error</span><strong>${escapeHtml(telegram.lastError)}</strong></div>` : "";
   document.getElementById("telegram-status").innerHTML = `
-    <div class="telegram-state ${escapeHtml(status)}"><span class="meta">Connection</span><strong>${escapeHtml(statusLabel)}</strong></div>
+    <div class="telegram-credentials ${escapeHtml(status)}">
+      <div class="credential-header">
+        <span class="meta">Credentials</span>
+        <span class="badge ${status === "error" ? "bad" : status === "verified" ? "good" : "info"}">${escapeHtml(statusLabel)}</span>
+      </div>
+      <div class="credential-grid">
+        <div class="credential-line">
+          <span class="credential-icon" aria-hidden="true">KEY</span>
+          <div><span class="meta">Bot token</span><strong>${escapeHtml(telegram.botTokenPreview || "Missing")}</strong></div>
+        </div>
+        <div class="credential-line">
+          <span class="credential-icon" aria-hidden="true">ID</span>
+          <div><span class="meta">Chat ID</span><strong>${escapeHtml(telegram.chatId || "Missing")}</strong></div>
+        </div>
+      </div>
+    </div>
     <div><span class="meta">Notifications</span><strong>${telegram.enabled ? "Enabled" : "Paused"}</strong></div>
-    <div><span class="meta">Token</span><strong>${telegram.botTokenConfigured ? "Saved" : "Missing"}</strong></div>
-    <div><span class="meta">Chat</span><strong>${escapeHtml(telegram.chatId || "Missing")}</strong></div>
-    <div><span class="meta">Masked token</span><strong>${escapeHtml(telegram.botTokenPreview || "-")}</strong></div>
+    <div><span class="meta">Verified</span><strong>${telegram.verifiedAt ? formatDateTime(telegram.verifiedAt) : "Not yet"}</strong></div>
     ${error}
   `;
 }
@@ -729,9 +818,39 @@ function priceSparkline(history = []) {
 
 function toggleAlerts(open) {
   const panel = document.getElementById("alerts-panel");
+  const scrim = document.getElementById("alerts-scrim");
   document.getElementById("alerts-toggle").setAttribute("aria-expanded", String(open));
   panel.classList.toggle("open", open);
   panel.setAttribute("aria-hidden", String(!open));
+  clearTimeout(toggleAlerts.scrimTimer);
+  if (open) {
+    scrim.hidden = false;
+    requestAnimationFrame(() => scrim.classList.add("open"));
+    return;
+  }
+  scrim.classList.remove("open");
+  toggleAlerts.scrimTimer = setTimeout(() => {
+    scrim.hidden = true;
+  }, 190);
+}
+
+async function runAction(action, failurePrefix = "Action failed") {
+  try {
+    await action();
+  } catch (error) {
+    showToast(`${failurePrefix}: ${error.message}`, "error");
+  }
+}
+
+async function runBusyAction(button, action, failurePrefix = "Action failed") {
+  setButtonBusy(button);
+  try {
+    await action();
+  } catch (error) {
+    showToast(`${failurePrefix}: ${error.message}`, "error");
+  } finally {
+    resetButtonBusy(button);
+  }
 }
 
 function sortListings(listings, mode) {
@@ -759,20 +878,48 @@ function applyDensity() {
   toggle.setAttribute("aria-pressed", String(compact));
 }
 
-function setButtonBusy(button, text) {
+function setButtonBusy(button) {
   if (!button) return;
   button.dataset.idleText = button.dataset.idleText || button.textContent;
   button.setAttribute("aria-busy", "true");
-  button.textContent = text;
+  button.disabled = true;
 }
 
-let toastTimer;
-function showToast(message) {
-  const toast = document.getElementById("toast");
-  toast.textContent = message;
-  toast.classList.add("visible");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.remove("visible"), 2200);
+function resetButtonBusy(button) {
+  if (!button) return;
+  button.removeAttribute("aria-busy");
+  button.disabled = false;
+  if (button.dataset.idleText) {
+    button.textContent = button.dataset.idleText;
+  }
+}
+
+function showToast(message, type = "info", options = {}) {
+  const root = document.getElementById("toast-root");
+  if (!root) return;
+  const toast = document.createElement("div");
+  const safeType = ["success", "error", "info", "warn"].includes(type) ? type : "info";
+  toast.className = `toast toast-${safeType}`;
+  toast.dataset.state = "entering";
+  toast.setAttribute("role", safeType === "error" ? "alert" : "status");
+  toast.innerHTML = `
+    <span class="toast-mark" aria-hidden="true"></span>
+    <p>${escapeHtml(message)}</p>
+    <button type="button" aria-label="Dismiss notification">x</button>
+  `;
+  root.prepend(toast);
+  toast.querySelector("button").addEventListener("click", () => dismissToast(toast));
+  requestAnimationFrame(() => {
+    toast.dataset.state = "open";
+  });
+  toast.timer = setTimeout(() => dismissToast(toast), options.duration || (safeType === "error" ? 5200 : 3200));
+}
+
+function dismissToast(toast) {
+  if (!toast || toast.dataset.state === "closing") return;
+  clearTimeout(toast.timer);
+  toast.dataset.state = "closing";
+  setTimeout(() => toast.remove(), 190);
 }
 
 function formatAge(listing) {
@@ -800,6 +947,22 @@ async function checkedJson(response) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "Request failed");
   return payload;
+}
+
+async function request(path, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
+  try {
+    const response = await fetch(path, { ...options, signal: controller.signal });
+    return await checkedJson(response);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error(`Request timed out after ${API_TIMEOUT_MS / 1000}s`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function escapeHtml(value) {
