@@ -104,7 +104,7 @@ button[aria-busy="true"]::after {
 
 .app {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 108px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -113,12 +113,62 @@ button[aria-busy="true"]::after {
   top: 0;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  align-items: center;
+  gap: 34px;
   height: 100vh;
-  padding: 28px 18px;
-  border-right: 1px solid var(--line);
+  padding: 28px 12px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
   color: #fff;
-  background: #0f1115;
+  background:
+    radial-gradient(circle at 50% 0, rgba(255, 255, 255, 0.1), transparent 180px),
+    #0d101c;
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.03);
+}
+
+.sidebar-brand {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  position: relative;
+  display: block;
+  width: 39px;
+  height: 40px;
+}
+
+.brand-mark span {
+  position: absolute;
+  left: 7px;
+  display: block;
+  width: 25px;
+  height: 12px;
+  border-radius: 999px;
+  transform-origin: center;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+}
+
+.brand-mark span:nth-child(1) {
+  top: 3px;
+  background: #ff7a66;
+  transform: rotate(-28deg);
+}
+
+.brand-mark span:nth-child(2) {
+  top: 14px;
+  background: #ff4f72;
+  transform: rotate(28deg);
+}
+
+.brand-mark span:nth-child(3) {
+  top: 24px;
+  background: #eef4f7;
+  transform: rotate(-25deg);
+}
+
+.brand-copy {
+  display: none;
 }
 
 h1,
@@ -163,36 +213,91 @@ h3 {
 
 nav {
   display: grid;
-  gap: 7px;
+  justify-items: center;
+  gap: 14px;
+  width: 100%;
 }
 
 .nav-button {
   position: relative;
-  justify-content: flex-start;
-  border-color: transparent;
-  color: var(--muted);
-  text-align: left;
+  display: inline-grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  min-height: 0;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  color: #d7dde6;
+  text-align: center;
   background: transparent;
+  isolation: isolate;
 }
 
 .nav-button.active {
-  color: var(--ink);
-  border-color: rgba(255, 255, 255, 0.08);
-  background: #181c22;
+  width: 88px;
+  color: #fff;
+  background: rgba(235, 236, 226, 0.6);
+  box-shadow:
+    0 18px 34px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
 }
 
 .nav-button.active::before {
   position: absolute;
-  inset: 9px auto 9px 0;
-  width: 3px;
+  right: 13px;
+  width: 6px;
+  height: 6px;
   border-radius: 999px;
-  background: var(--green);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.08);
   content: "";
 }
 
 .nav-button:hover {
-  border-color: rgba(255, 255, 255, 0.1);
   color: var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.nav-button.active:hover {
+  background: rgba(235, 236, 226, 0.68);
+}
+
+.nav-button svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.nav-button span {
+  position: absolute;
+  left: calc(100% + 12px);
+  z-index: 5;
+  min-width: max-content;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--ink);
+  background: rgba(17, 19, 23, 0.94);
+  box-shadow: var(--shadow-soft);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-4px) scale(0.96);
+  transition:
+    opacity 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+
+.nav-button:hover span,
+.nav-button:focus-visible span {
+  opacity: 1;
+  transform: translateX(0) scale(1);
 }
 
 main {
@@ -813,11 +918,27 @@ dialog::backdrop {
 
   .sidebar {
     position: static;
+    align-items: stretch;
     height: auto;
     gap: 16px;
-    padding: 18px;
+    padding: 16px 18px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+
+  .sidebar-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .brand-mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brand-copy {
+    display: block;
   }
 
   nav,
@@ -839,16 +960,42 @@ dialog::backdrop {
   }
 
   .nav-button {
+    width: 100%;
     min-height: 36px;
     justify-content: center;
-    padding: 7px 8px;
+    height: auto;
+    border-radius: 999px;
+    padding: 9px 8px;
     text-align: center;
   }
 
+  .nav-button.active {
+    width: 100%;
+  }
+
   .nav-button.active::before {
-    inset: auto 18px 0;
-    width: auto;
-    height: 3px;
+    right: 12px;
+    width: 5px;
+    height: 5px;
+  }
+
+  .nav-button svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .nav-button span {
+    position: static;
+    min-width: 0;
+    border: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
+    opacity: 1;
+    transform: none;
+    margin-left: 7px;
+    font-size: 12px;
+    font-weight: 800;
   }
 
   .toolbar {
