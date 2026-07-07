@@ -4,20 +4,38 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Carousell Bot</title>
+    <script>
+      document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark";
+    </script>
     <link rel="stylesheet" href="/styles.css">
   </head>
   <body>
     <div class="app">
-      <aside class="sidebar">
-        <div>
-          <p class="eyebrow">Local PC test</p>
-          <h1>Carousell Bot</h1>
-        </div>
+      <aside class="sidebar" aria-label="Primary navigation">
+        <a class="sidebar-brand" href="#dashboard" aria-label="Carousell Bot dashboard">
+          <span class="brand-mark" aria-hidden="true"><img src="/assets/CAROUSELL.svg" alt=""></span>
+          <div class="brand-copy">
+            <p class="eyebrow">Local PC test</p>
+            <h1>Bot</h1>
+          </div>
+        </a>
         <nav>
-          <button class="nav-button active" data-view="dashboard">Dashboard</button>
-          <button class="nav-button" data-view="search">Search</button>
-          <button class="nav-button" data-view="listings">Listings</button>
-          <button class="nav-button" data-view="settings">Filters</button>
+          <button class="nav-button active" data-view="dashboard" aria-label="Dashboard">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13a8 8 0 0 1 16 0"/><path d="m12 13 4-5"/><path d="M5 17h14"/></svg>
+            <span>Dashboard</span>
+          </button>
+          <button class="nav-button" data-view="search" aria-label="Search">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>
+            <span>Search</span>
+          </button>
+          <button class="nav-button" data-view="listings" aria-label="Listings">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M8 9h8M8 13h6M8 17h4"/></svg>
+            <span>Listings</span>
+          </button>
+          <button class="nav-button" data-view="settings" aria-label="Filters">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M7 12h10M10 17h4"/><circle cx="8" cy="7" r="1.8"/><circle cx="15" cy="12" r="1.8"/><circle cx="11" cy="17" r="1.8"/></svg>
+            <span>Filters</span>
+          </button>
         </nav>
       </aside>
 
@@ -29,34 +47,49 @@
               <h2>Dashboard</h2>
             </div>
             <div class="toolbar-actions">
+              <button id="theme-toggle" type="button" aria-pressed="false">Light mode</button>
               <button id="density-toggle" type="button" aria-pressed="false">Compact</button>
               <button id="refresh">Refresh</button>
             </div>
           </div>
-          <form id="dashboard-search-form" class="command-bar">
-            <input id="dashboard-query" placeholder="Search Carousell from here..." aria-label="Dashboard search">
-            <button type="submit">Search web</button>
-          </form>
-          <div id="stats" class="stats"></div>
+          <div class="dashboard-hero">
+            <div>
+              <p class="eyebrow">Live command center</p>
+              <h3>Deal intelligence at a glance</h3>
+              <p class="section-caption">Track pipeline health, filter pressure, and high-signal buying opportunities without scrolling through every listing.</p>
+            </div>
+            <form id="dashboard-search-form" class="command-bar dashboard-command">
+              <input id="dashboard-query" placeholder="Search Carousell from here..." aria-label="Dashboard search">
+              <button type="submit">Search web</button>
+            </form>
+          </div>
+          <div id="stats" class="stats dashboard-stats"></div>
+          <div class="dashboard-panels">
+            <section class="dashboard-panel panel-primary">
+              <div class="section-bar flush">
+                <div>
+                  <h3>Opportunity Pipeline</h3>
+                  <p class="section-caption">What needs attention right now.</p>
+                </div>
+              </div>
+              <div id="dashboard-pipeline" class="pipeline-list"></div>
+            </section>
+            <section class="dashboard-panel">
+              <h3>Market Health</h3>
+              <div id="dashboard-health" class="health-grid"></div>
+            </section>
+            <section class="dashboard-panel">
+              <h3>Recent Search Ops</h3>
+              <div id="dashboard-activity" class="activity-list"></div>
+            </section>
+          </div>
           <div class="section-bar">
             <div>
-              <h3>Latest Listings</h3>
-              <p class="section-caption">Fresh visible posts, sorted for fast triage.</p>
+              <h3>Top Deal Candidates</h3>
+              <p class="section-caption">A short shortlist only — use Listings for full browsing.</p>
             </div>
-            <select id="dashboard-sort" aria-label="Dashboard sort">
-              <option value="recent">Newest first</option>
-              <option value="score" selected>Best score</option>
-              <option value="price_low">Lowest price</option>
-              <option value="price_high">Highest price</option>
-            </select>
           </div>
-          <div>
-            <div id="latest-listings" class="grid"></div>
-          </div>
-          <div>
-            <h3>Deal Candidates</h3>
-            <div id="deals" class="grid"></div>
-          </div>
+          <div id="deals" class="grid deal-grid"></div>
         </section>
 
         <section id="search" class="view">
