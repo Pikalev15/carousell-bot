@@ -110,6 +110,8 @@ button[aria-busy="true"]::after {
 
 .sidebar {
   position: sticky;
+  z-index: 20;
+  overflow: visible;
   top: 0;
   display: flex;
   flex-direction: column;
@@ -301,6 +303,8 @@ nav {
 }
 
 main {
+  position: relative;
+  z-index: 1;
   width: min(1500px, 100%);
   padding: 34px;
   overflow-x: hidden;
