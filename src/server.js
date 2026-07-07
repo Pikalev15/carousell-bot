@@ -108,13 +108,12 @@ async function handleApi(request, response, url) {
 
     await recordSearch(query, mode);
     const webSearch = mode !== "local" ? await searchAndStoreWebResults(query, mode) : null;
-    if (mode === "more" && (!webSearch || webSearch.added === 0)) await addDemoSearchResults(query);
 
     const state = await getState();
     sendJson(response, 200, {
       query,
       mode,
-      source: webSearch?.source || (mode === "more" ? "local-demo" : "local"),
+      source: webSearch?.source || "local",
       source_url: webSearch?.url || null,
       added: webSearch?.added || 0,
       updated: webSearch?.updated || 0,
@@ -451,52 +450,11 @@ async function searchAndStoreWebResults(query, mode) {
       updated
     };
   } catch (error) {
-    return {
-      source: "local-fallback",
-      url: null,
-      added: 0,
-      warning: `Web search failed: ${error.message}`
-    };
+    error.message = `Web search failed: ${error.message}`;
+    throw error;
   }
 }
 
-async function addDemoSearchResults(query) {
-  const listings = await readJson("listings");
-  const existingForQuery = listings.filter((listing) => listing.carousell_id.startsWith(`demo-${slug(query)}-`)).length;
-  const additions = makeDemoListings(query, listings.length + 1, existingForQuery);
-  listings.push(...additions);
-  await writeJson("listings", listings);
-}
-
-function makeDemoListings(query, startId, offset) {
-  const cleanQuery = titleCase(query);
-  const category = inferCategory(query);
-  const sellers = ["Nate", "Clara", "Wei", "Rina", "Harish", "Jo"];
-  const conditions = ["like_new", "good", "fair", "new"];
-  return Array.from({ length: 6 }, (_, index) => {
-    const n = offset + index + 1;
-    const bait = n % 5 === 0;
-    const hostile = n % 4 === 0;
-    const price = bait ? 1 : Math.max(45, Math.round((520 + n * 73) * (category === "camera" ? 1.8 : 1)));
-    return {
-      id: startId + index,
-      carousell_id: `demo-${slug(query)}-${Date.now()}-${index}`,
-      title: `${cleanQuery} ${n % 2 ? "bundle" : "set"} ${n}`,
-      description: bait ? "Offer me, testing water." : hostile ? "No lowball. Price firm." : "Personal sale, meet-up preferred.",
-      category,
-      condition: conditions[n % conditions.length],
-      seller_id: `demo-seller-${slug(query)}-${n}`,
-      seller_name: sellers[n % sellers.length],
-      seller_rating: Number((3.7 + (n % 14) / 10).toFixed(1)),
-      location: ["Bishan", "Tampines", "Jurong", "Orchard", "Serangoon"][n % 5],
-      days_listed: (n * 3) % 45,
-      current_price: price,
-      image_urls: [],
-      carousell_url: "https://www.carousell.sg/",
-      scraped_at: new Date().toISOString()
-    };
-  });
-}
 
 function mergeListingDetails(existing, incoming) {
   return {
@@ -529,26 +487,6 @@ function calculateMarketMedians(listings) {
       return [category, sorted[Math.floor(sorted.length / 2)]];
     })
   );
-}
-
-function inferCategory(query) {
-  const text = query.toLowerCase();
-  if (/camera|sony|canon|nikon|fuji|lens/.test(text)) return "camera";
-  if (/switch|playstation|xbox|game|ps5/.test(text)) return "gaming";
-  if (/airpod|speaker|headphone|audio/.test(text)) return "audio";
-  return "electronics";
-}
-
-function slug(value) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "search";
-}
-
-function titleCase(value) {
-  return value
-    .trim()
-    .split(/\s+/)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
 }
 
 async function serveStatic(urlPath, response) {

@@ -9,6 +9,7 @@ const state = {
   trainingModel: {},
   searchResults: [],
   lastQuery: "",
+  theme: localStorage.getItem("theme") || "dark",
   density: localStorage.getItem("density") || "comfortable"
 };
 
@@ -42,6 +43,12 @@ document.getElementById("refresh").addEventListener("click", async (event) => {
   event.currentTarget.textContent = "Refresh";
   showToast("Dashboard updated");
 });
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  localStorage.setItem("theme", state.theme);
+  applyTheme();
+});
+
 document.getElementById("density-toggle").addEventListener("click", () => {
   state.density = state.density === "compact" ? "comfortable" : "compact";
   localStorage.setItem("density", state.density);
@@ -513,6 +520,14 @@ function sortListings(listings, mode) {
   });
 }
 
+function applyTheme() {
+  document.documentElement.dataset.theme = state.theme;
+  const toggle = document.getElementById("theme-toggle");
+  const light = state.theme === "light";
+  toggle.textContent = light ? "Dark mode" : "Light mode";
+  toggle.setAttribute("aria-pressed", String(light));
+}
+
 function applyDensity() {
   const compact = state.density === "compact";
   document.body.classList.toggle("compact-density", compact);
@@ -569,5 +584,6 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+applyTheme();
 applyDensity();
 load();

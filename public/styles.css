@@ -4,14 +4,19 @@
   --surface: #111317;
   --surface-2: #171a1f;
   --surface-3: #1d2128;
+  --control: #101216;
+  --control-hover: #151922;
+  --control-subtle: #0d0f12;
   --ink: #f4f7fb;
   --muted: #9aa6b2;
   --soft: #c8d2dd;
   --line: #2a3038;
   --line-strong: #3a424d;
-  --green: #16a77a;
-  --green-strong: #0f8b66;
-  --green-soft: rgba(22, 167, 122, 0.16);
+  --brand: #ff5a5f;
+  --brand-hover: #ff7377;
+  --brand-contrast: #2b090b;
+  --brand-soft: rgba(255, 90, 95, 0.16);
+  --brand-glow: rgba(255, 90, 95, 0.22);
   --blue: #6a9cff;
   --blue-soft: rgba(106, 156, 255, 0.16);
   --red: #ff6b57;
@@ -22,6 +27,35 @@
   --shadow-soft: 0 10px 32px rgba(0, 0, 0, 0.18);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f6f1ee;
+  --surface: #fffaf7;
+  --surface-2: #fff2ed;
+  --surface-3: #f3e2dc;
+  --control: #ffffff;
+  --control-hover: #fff2ed;
+  --control-subtle: #fff7f4;
+  --ink: #272126;
+  --muted: #756a70;
+  --soft: #463c42;
+  --line: #ead8d2;
+  --line-strong: #d9bdb5;
+  --brand: #ff5a5f;
+  --brand-hover: #e9484e;
+  --brand-contrast: #ffffff;
+  --brand-soft: rgba(255, 90, 95, 0.13);
+  --brand-glow: rgba(255, 90, 95, 0.18);
+  --blue: #416bd8;
+  --blue-soft: rgba(65, 107, 216, 0.12);
+  --red: #d94035;
+  --red-soft: rgba(217, 64, 53, 0.12);
+  --amber: #a86812;
+  --amber-soft: rgba(168, 104, 18, 0.12);
+  --shadow: 0 24px 70px rgba(82, 47, 39, 0.16);
+  --shadow-soft: 0 10px 32px rgba(82, 47, 39, 0.1);
 }
 
 * {
@@ -63,7 +97,7 @@ button {
   border-radius: 7px;
   padding: 8px 12px;
   color: var(--soft);
-  background: #101216;
+  background: var(--control);
   cursor: pointer;
   transition:
     transform 140ms var(--ease-out),
@@ -75,7 +109,7 @@ button {
 button:hover {
   border-color: var(--line-strong);
   color: var(--ink);
-  background: #151922;
+  background: var(--control-hover);
 }
 
 button:active {
@@ -86,7 +120,7 @@ button[aria-busy="true"] {
   pointer-events: none;
   color: var(--muted);
   border-color: var(--line);
-  background: #0d0f12;
+  background: var(--control-subtle);
 }
 
 button[aria-busy="true"]::after {
@@ -629,9 +663,9 @@ main {
 }
 
 .badge.good {
-  border-color: rgba(22, 167, 122, 0.35);
-  color: #8ff0cb;
-  background: var(--green-soft);
+  border-color: rgba(255, 90, 95, 0.35);
+  color: var(--brand);
+  background: var(--brand-soft);
 }
 
 .badge.warn {
@@ -665,7 +699,7 @@ main {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #0e1013;
+  background: var(--control-subtle);
 }
 
 .score-strip span {
@@ -733,18 +767,18 @@ main {
 .command-bar button,
 .search-row button[type="submit"],
 .primary-action {
-  color: #06140f;
-  border-color: var(--green);
-  background: var(--green);
+  color: var(--brand-contrast);
+  border-color: var(--brand);
+  background: var(--brand);
   font-weight: 800;
 }
 
 .command-bar button:hover,
 .search-row button[type="submit"]:hover,
 .primary-action:hover {
-  color: #03100b;
-  border-color: #23c895;
-  background: #23c895;
+  color: var(--brand-contrast);
+  border-color: var(--brand-hover);
+  background: var(--brand-hover);
 }
 
 .notice {
@@ -762,7 +796,7 @@ select {
   border-radius: 7px;
   padding: 8px 10px;
   color: var(--ink);
-  background: #0d0f12;
+  background: var(--control-subtle);
   transition:
     border-color 160ms var(--ease-out),
     box-shadow 160ms var(--ease-out),
@@ -776,9 +810,9 @@ input::placeholder {
 input:focus,
 select:focus {
   outline: 0;
-  border-color: rgba(22, 167, 122, 0.86);
-  box-shadow: 0 0 0 3px rgba(22, 167, 122, 0.15);
-  background: #101318;
+  border-color: color-mix(in srgb, var(--brand) 86%, transparent);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+  background: var(--control);
 }
 
 .table {
@@ -834,7 +868,7 @@ select:focus {
   padding: 11px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #0d0f12;
+  background: var(--control-subtle);
 }
 
 .training-stats strong {
@@ -876,12 +910,12 @@ select:focus {
 }
 
 .actions button[data-label="not_spam"] {
-  color: #76dfbd;
+  color: var(--brand);
 }
 
 .actions button[data-label="not_spam"]:hover {
-  border-color: rgba(22, 167, 122, 0.5);
-  background: var(--green-soft);
+  border-color: rgba(255, 90, 95, 0.5);
+  background: var(--brand-soft);
 }
 
 dialog {
