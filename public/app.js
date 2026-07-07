@@ -392,9 +392,14 @@ function renderTraining() {
 function card(listing) {
   const classification = listing.classification;
   const label = state.labels.find((item) => item.listing_id === listing.id);
+  const dealScore = Number(listing.score?.deal_score || 0);
+  const visualUrl = listingImage(listing);
+  const visual = visualUrl
+    ? `<div class="listing-visual"><img src="${escapeHtml(visualUrl)}" alt="" loading="lazy"></div>`
+    : `<div class="listing-visual empty"><span>${escapeHtml(String(listing.title || "?").trim().slice(0, 1).toUpperCase() || "?")}</span></div>`;
   const badge = classification.is_filtered
     ? `<span class="badge bad">${classification.post_type}</span>`
-    : `<span class="badge good">Score ${listing.score.deal_score}</span>`;
+    : `<span class="badge good">Score ${dealScore}</span>`;
   const score = listing.score
     ? `
       <div class="score-strip">
@@ -402,6 +407,7 @@ function card(listing) {
         <span>Price <strong>${listing.score.price_score}</strong></span>
         <span>Preference <strong>${listing.score.training_preference}</strong></span>
       </div>
+      <div class="score-meter" aria-hidden="true"><span></span></div>
     `
     : "";
   const reasons = classification.reasons.length
@@ -414,7 +420,8 @@ function card(listing) {
       : "";
 
   return `
-    <article class="card" style="--entry-index: ${Number(listing.id || 0) % 12}">
+    <article class="card" style="--entry-index: ${Number(listing.id || 0) % 12}; --score: ${dealScore}">
+      ${visual}
       <div class="card-header">
         <div class="listing-main">
           <p class="title">${escapeHtml(listing.title)}</p>
@@ -509,6 +516,11 @@ function sellerMarkup(listing) {
 function displayLocation(listing) {
   const location = String(listing.location || "").trim();
   return escapeHtml(location && !/^carousell sg$/i.test(location) ? location : "Location not listed");
+}
+
+function listingImage(listing) {
+  const urls = Array.isArray(listing.image_urls) ? listing.image_urls : [];
+  return urls.find((url) => url && !/\/profiles?\//i.test(url)) || "";
 }
 
 function sortListings(listings, mode) {
