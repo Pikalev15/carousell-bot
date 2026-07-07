@@ -209,6 +209,46 @@ function collectListingsFromAnchors(html, found, query) {
   }
 }
 
+const EXCLUDED_IMAGE_PATTERN = /(avatar|profile[-_]?(pic|photo|image)|user[-_]?icon|placeholder|sprite|favicon|\blogo\b|blank\.gif|1x1|loading[-_]?spinner|badge|star-rating|verified-icon)/i;
+
+function normalizeImageUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (url.startsWith("//")) return `https:${url}`;
+  if (url.startsWith("/")) return `${CAROUSELL_BASE_URL}${url}`;
+  if (/^https?:\/\//i.test(url)) return url;
+  return "";
+}
+
+function mergeImageUrls(...sources) {
+  const urls = [];
+  for (const source of sources) {
+    if (!Array.isArray(source)) continue;
+    for (const raw of source) {
+      const url = normalizeImageUrl(raw);
+      if (!url || urls.includes(url)) continue;
+      if (EXCLUDED_IMAGE_PATTERN.test(url)) continue;
+      urls.push(url);
+    }
+  }
+  return urls.slice(0, 6);
+}
+
+function extractImageUrlsFromHtml(html) {
+  const source = String(html || "");
+  const urls = [];
+  const attrPattern = /(?:src|data-src|data-original|data-lazy-src|srcset)=["']([^"']+)["']/gi;
+  let match;
+  while ((match = attrPattern.exec(source))) {
+    const value = decodeHtml(match[1]);
+    for (const candidate of value.split(",")) {
+      const url = candidate.trim().split(/\s+/)[0];
+      if (url) urls.push(url);
+    }
+  }
+  return urls;
+}
+
 function normalizeListing(input) {
   const cardText = String(input.cardText || "");
   const parsedCard = parseCardText(cardText);

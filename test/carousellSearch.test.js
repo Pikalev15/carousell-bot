@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractDescription, extractLocation, extractRealPriceFromDescription, parseCardText } from "../src/carousellSearch.js";
+import { extractDescription, extractListingsFromHtml, extractLocation, extractRealPriceFromDescription, parseCardText } from "../src/carousellSearch.js";
 import { parseMoney } from "../src/currency.js";
 import { estimateMsrp } from "../src/msrpSearch.js";
 
@@ -96,6 +96,21 @@ test("extracts location from seller-written description", () => {
   const description = "Self collect at 731690/Admiralty MRT. Can deliver to your place at my convenience for additional $5.";
 
   assert.equal(extractLocation("", "", description), "731690/Admiralty MRT");
+});
+
+test("extracts real listing photos and filters out avatars/logos", () => {
+  const html = '<a href="/p/test-item-123"><img src="https://media.carousell.sg/photo1.jpg"><img src="https://media.carousell.sg/avatar-icon.png">Test Item S$100</a>';
+  const [listing] = extractListingsFromHtml(html, "test");
+  assert.deepEqual(listing.image_urls, ["https://media.carousell.sg/photo1.jpg"]);
+});
+
+test("normalizes protocol-relative and root-relative image URLs", () => {
+  const html = '<a href="/p/test-item-456"><img src="//media.carousell.sg/photo2.jpg"><img src="/images/photo3.jpg">Another Item S$50</a>';
+  const [listing] = extractListingsFromHtml(html, "test");
+  assert.deepEqual(listing.image_urls, [
+    "https://media.carousell.sg/photo2.jpg",
+    "https://www.carousell.sg/images/photo3.jpg"
+  ]);
 });
 
 test("estimates MSRP from Google search text and converts USD", () => {
