@@ -450,8 +450,7 @@ async function searchAndStoreWebResults(query, mode) {
       updated
     };
   } catch (error) {
-    error.message = `Web search failed: ${error.message}`;
-    throw error;
+    throw new Error(`Web search failed: ${error.message}`, { cause: error });
   }
 }
 
