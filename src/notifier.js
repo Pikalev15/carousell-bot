@@ -193,16 +193,21 @@ export async function syncTelegramCommands(config = null) {
 
 export async function updateTelegramConfig(input) {
   const config = await readJson("config");
+  const currentTelegram = config.telegram || {};
+  const botTokenInput = input.botToken ?? input.bot_token;
+  const chatIdInput = input.chatId ?? input.chat_id;
+  const botToken = String(botTokenInput ?? "").trim() || currentTelegram.botToken || "";
+  const chatId = String(chatIdInput ?? "").trim() || currentTelegram.chatId || "";
   const next = {
     ...config,
     telegram: {
-      ...config.telegram,
+      ...currentTelegram,
       enabled: Boolean(input.enabled),
-      botToken: String(input.botToken || input.bot_token || "").trim(),
-      chatId: String(input.chatId || input.chat_id || "").trim(),
+      botToken,
+      chatId,
       status: "saved",
       lastError: "",
-      verifiedAt: config.telegram?.verifiedAt || null
+      verifiedAt: currentTelegram.verifiedAt || null
     }
   };
   await writeJson("config", next);

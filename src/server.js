@@ -11,7 +11,6 @@ import { SearchScheduler } from "./scheduler.js";
 import {
   addActivity,
   bulkUpsertListings,
-  createAlert,
   deleteWatchedSearch,
   getActivity,
   getAlerts,
@@ -57,7 +56,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   startTelegramCommandPolling(handleTelegramCommand).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
 }
 
-export { server, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand };
+export { server, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand, runWatchedSearch, shouldSuppressAlert };
 
 async function handleApi(request, response, url) {
   if (request.method === "GET" && url.pathname === "/api/health") {
@@ -814,7 +813,7 @@ async function runWatchedSearch(watch) {
   const seen = new Set();
   const results = [];
   for (const term of terms) {
-    const result = await searchAndStoreWebResults(term, "web", { watch, alert: true, categoryQuery: watch.query });
+    const result = await searchAndStoreWebResults(term, "web", { watch, alert: true, categoryQuery: watch.query, awaitHydration: true });
     results.push(result);
     for (const listing of await readJson("listings")) {
       if (seen.has(listing.carousell_id)) continue;
@@ -1005,9 +1004,14 @@ async function emitAlert(alert) {
     addActivity({ type: "alert_suppressed", title: "Duplicate alert skipped", detail: alert.title, listing_id: alert.listing_id, watch_id: alert.watch_id });
     return null;
   }
-  const saved = createAlert(alert);
-  addActivity({ type: saved.type, title: saved.title, detail: saved.message, listing_id: saved.listing_id, watch_id: saved.watch_id });
-  await notifyAlert(saved);
+  const { alert: saved, result } = await notifyAlert(alert);
+  addActivity({
+    type: result.ok ? saved.type : "notification_error",
+    title: result.ok ? saved.title : "Telegram notification failed",
+    detail: result.ok ? saved.message : saved.error,
+    listing_id: saved.listing_id,
+    watch_id: saved.watch_id
+  });
   return saved;
 }
 
@@ -1015,6 +1019,7 @@ function shouldSuppressAlert(alert) {
   const key = alert.alert_key || alertKey(alert);
   const existing = getAlerts({ limit: 1000 });
   return existing.some((item) => {
+    if (!item.sent_at || item.error) return false;
     if ((item.alert_key || alertKey(item)) === key) return true;
     if (alert.type === "price_drop") return false;
     return Number(item.listing_id || 0) === Number(alert.listing_id || -1)
