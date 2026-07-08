@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
+import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
 import { buildListings, handleTelegramCommand, server } from "./server.js";
 import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
@@ -173,6 +174,7 @@ async function startOriginalScheduler() {
 
 async function callOriginalJson(method, url, body) {
   return await new Promise((resolve, reject) => {
+    const chunks = [];
     const request = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
     request.method = method;
     request.url = url;
