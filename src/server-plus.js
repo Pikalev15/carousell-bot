@@ -1,10 +1,8 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
-import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
-import { scoreDeal } from "./filterEngine.js";
-import { buildListings, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
+import { buildListings, handleTelegramCommand, server } from "./server.js";
 import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
 import { flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
@@ -253,6 +251,7 @@ async function startOriginalScheduler() {
 
 async function callOriginalJson(method, url, body) {
   return await new Promise((resolve, reject) => {
+    const chunks = [];
     const request = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
     request.method = method;
     request.url = url;
