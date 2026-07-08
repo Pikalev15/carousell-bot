@@ -8,7 +8,7 @@
           .then(() => askForToken(getStoredToken() || ""))
           .then((value) => {
             const token = String(value || "").trim();
-            if (token) setStoredToken(token);
+            setStoredToken(token);
             return token;
           })
           .finally(() => {
