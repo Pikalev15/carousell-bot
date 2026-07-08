@@ -25,7 +25,7 @@ const ACCESSORY_ONLY_PATTERN = /\b(?:only|not\s+(?:the\s+)?full|add-?on|accessor
 const BUNDLE_PATTERN = /\b(?:bundle|combo|whole set|all at once|mixed parts|parts lot|assorted|bunch of|take all|pc parts)\b/i;
 const SCHOOL_BOOK_PATTERN = /\b(?:grade\s?\d|textbook|workbook|assessment book|english|mathematics|math|computer science subject|kkis|tuition|worksheet)\b/i;
 const COLLECTIBLE_PATTERN = /\b(?:rare collectibles?|vintage|retro|showpiece|decorative display|movie props?|studio exhibit|teaching tools?|training aids?|no power cable|working status unknown)\b/i;
-const BROKEN_PATTERN = /\b(?:faulty|spoilt|not working|for parts|no hard\s?drive|no hdd|no battery|cracked|broken|unable to test|as-is|own risk)\b/i;
+const BROKEN_PATTERN = /\b(?:faulty|spoilt|not working|for parts|no hard\s?drive|no hdd|no battery|no power cable|working status unknown|status unknown|untested|cracked|broken|unable to test|as-is|own risk)\b/i;
 const FULL_PC_PATTERN = /\b(?:full build|custom pc|gaming pc|desktop pc|prebuilt|pre-built|workstation|plug and play|windows 11 ready)\b/i;
 
 const CATEGORY_RULES = [
