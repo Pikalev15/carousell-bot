@@ -1,6 +1,7 @@
 (() => {
   const script = document.createElement("script");
   script.src = "/duplicate-ui.js";
+  script.async = false;
   document.currentScript?.insertAdjacentElement("afterend", script);
 })();
 
