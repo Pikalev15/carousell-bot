@@ -39,7 +39,7 @@ export function trainModel(listings, labels) {
     const listing = listingById.get(Number(label.listing_id));
     if (!listing) continue;
 
-    const userRating = normalizeRefinedRating(label.user_rating || label.rating);
+    const userRating = normalizeRefinedRating(label.refined_rating || label.user_rating || label.rating);
     const effect = labelTrainingEffect(userRating);
     labelCounts[userRating] = (labelCounts[userRating] || 0) + 1;
     if (!effect.polarity) {
