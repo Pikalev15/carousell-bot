@@ -4,6 +4,7 @@ import { buildListings, handleTelegramCommand, server } from "./server.js";
 import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
 import { flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
+import { saveRefinedListingLabel } from "./refinedFeedback.js";
 import { searchAndStoreStartUrls } from "./startUrlSearch.js";
 
 const port = Number(process.env.PORT || 3000);
@@ -57,6 +58,16 @@ server.on("request", async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/start-urls/parse") {
       sendJson(response, 200, parseStartUrls(url.searchParams.getAll("url").length ? url.searchParams.getAll("url") : url.searchParams.get("urls")));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/feedback/label") {
+      const body = await readRequestBody(request);
+      try {
+        sendJson(response, 200, await saveRefinedListingLabel(Number(body.listing_id), body.rating, body));
+      } catch (error) {
+        sendJson(response, 400, { error: error.message });
+      }
       return;
     }
 
@@ -137,7 +148,7 @@ async function startOriginalScheduler() {
 
 async function callOriginalJson(method, url, body) {
   await new Promise((resolve, reject) => {
-    const request = Readable.from([JSON.stringify(body || {})]);
+    const request = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
     request.method = method;
     request.url = url;
     request.headers = { host: `localhost:${port}`, "content-type": "application/json" };
@@ -163,13 +174,13 @@ async function callOriginalJson(method, url, body) {
 
 async function readRequestBody(request) {
   const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
+  for await (const chunk of request) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
 }
 
 function makeJsonRequest(original, body) {
-  const next = Readable.from([JSON.stringify(body)]);
+  const next = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
   next.method = original.method;
   next.url = original.url;
   next.headers = { ...original.headers, "content-type": "application/json" };
