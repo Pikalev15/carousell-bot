@@ -11,6 +11,7 @@
     "migrate": "node scripts/migrate-json-to-sqlite.js",
     "clean:images": "node scripts/clean-listing-images.js",
     "enrich:data": "node scripts/enrich-listing-data.js",
+    "medians:default": "node scripts/apply-default-medians.js",
     "export:data": "node scripts/export-data.js",
     "test": "node --test",
     "postinstall": "playwright install chromium"
