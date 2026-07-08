@@ -1,7 +1,8 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
-import { buildListings, server } from "./server.js";
-import { getAlerts, getPriceHistory, getState } from "./store.js";
+import { buildListings, handleTelegramCommand, server } from "./server.js";
+import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
+import { startTelegramCommandPolling } from "./notifier.js";
 import { flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
 import { searchAndStoreStartUrls } from "./startUrlSearch.js";
 
@@ -107,9 +108,11 @@ server.on("request", async (request, response) => {
 
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   server.listen(port, () => {
-    console.log(`Carousell Bot Plus running at http://localhost:${port}`);
-    console.log("Extra routes: /api/export/listings.csv, /api/export/deals.csv, /api/export/alerts.json, /api/export/price-history.csv, /api/start-urls/parse");
+    console.log(`Carousell Bot running at http://localhost:${port}`);
+    console.log("Plus routes enabled: /api/export/listings.csv, /api/export/deals.csv, /api/export/alerts.json, /api/export/price-history.csv, /api/start-urls/parse");
   });
+  startOriginalScheduler().catch((error) => console.warn(`Scheduler failed to start: ${error.message}`));
+  startTelegramCommandPolling(handleTelegramCommand).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
 }
 
 function filterOptions(url) {
@@ -120,6 +123,42 @@ function filterOptions(url) {
     location: url.searchParams.get("location"),
     includeFiltered: url.searchParams.get("include_filtered") === "true"
   };
+}
+
+async function startOriginalScheduler() {
+  const config = await readJson("config");
+  if (!config.scheduler?.enabled) return;
+  await callOriginalJson("POST", "/api/scheduler", {
+    enabled: true,
+    intervalMinutes: config.scheduler.intervalMinutes || 30,
+    jitterSeconds: config.scheduler.jitterSeconds || 45
+  });
+}
+
+async function callOriginalJson(method, url, body) {
+  await new Promise((resolve, reject) => {
+    const request = Readable.from([JSON.stringify(body || {})]);
+    request.method = method;
+    request.url = url;
+    request.headers = { host: `localhost:${port}`, "content-type": "application/json" };
+
+    const response = {
+      headersSent: false,
+      writeHead() {
+        this.headersSent = true;
+        return this;
+      },
+      end() {
+        resolve();
+      },
+      on(event, handler) {
+        if (event === "error") this._onError = handler;
+        return this;
+      }
+    };
+
+    Promise.resolve(originalHandler(request, response)).catch(reject);
+  });
 }
 
 async function readRequestBody(request) {
