@@ -1,8 +1,9 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { buildListings, server } from "./server.js";
-import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
+import { getAlerts, getPriceHistory, getState } from "./store.js";
 import { flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
+import { searchAndStoreStartUrls } from "./startUrlSearch.js";
 
 const port = Number(process.env.PORT || 3000);
 const [originalHandler] = server.listeners("request");
@@ -62,11 +63,36 @@ server.on("request", async (request, response) => {
       const body = await readRequestBody(request);
       if (body.startUrls || body.start_urls || body.start_url || body.url) {
         const nextBody = searchBodyFromStartUrls(body);
-        if (!nextBody.query) {
+        if (!nextBody.query && !nextBody.startUrls?.length) {
           sendJson(response, 400, { error: "query or parseable startUrls are required" });
           return;
         }
-        await originalHandler(makeJsonRequest(request, nextBody), response);
+        const search = await searchAndStoreStartUrls(nextBody, {
+          limit: "all",
+          anchorLimit: nextBody.mode === "more" ? 500 : 240,
+          hydrateDetails: false
+        });
+        const state = await getState();
+        const query = nextBody.query || search.parsed?.primary?.query || "";
+        sendJson(response, 200, {
+          query,
+          mode: nextBody.mode || "web",
+          source: search.source,
+          source_url: search.url,
+          start_url_mode: search.start_url_mode,
+          added: search.added,
+          updated: search.updated,
+          hydration_job: null,
+          warning: null,
+          results: buildListings(state, query, {
+            minPrice: nextBody.min_price ?? 1,
+            maxPrice: nextBody.max_price,
+            maxAgeHours: nextBody.max_age_hours,
+            location: nextBody.location,
+            includeFiltered: Boolean(nextBody.include_filtered ?? true)
+          }),
+          history: state.searches || []
+        });
         return;
       }
       await originalHandler(makeJsonRequest(request, body), response);
