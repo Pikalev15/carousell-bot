@@ -22,5 +22,10 @@
     "jitterSeconds": 45,
     "lastRunAt": null,
     "nextRunAt": null
+  },
+  "scrapeHealthCheck": {
+    "enabled": true,
+    "minResultRatio": 0.2,
+    "minPreviousResults": 5
   }
 }

@@ -1,6 +1,14 @@
 node_modules/
 .env
-data/*.local.json
+
+# Local app state and secrets. Keep real data out of git.
+data/*
+!data/
+!data/config.example.json
+!data/listings.json
+!data/filters.json
+!data/seller-blacklist.json
+
 data/*.db
 data/*.db-*
 data/exports/

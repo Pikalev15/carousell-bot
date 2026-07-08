@@ -1,4 +1,5 @@
-import { addActivity, getWatchedSearches, readJson, writeJson } from "./store.js";
+import { addActivity, getWatchedSearches, readJson, upsertWatchedSearch, writeJson } from "./store.js";
+import { notifyAlert } from "./notifier.js";
 
 export class SearchScheduler {
   constructor(runWatchedSearch) {
@@ -50,7 +51,11 @@ export class SearchScheduler {
       const results = [];
       for (const watch of watches) {
         await delay(randomJitter(config.scheduler?.jitterSeconds));
-        results.push(await this.runWatchedSearch(watch));
+        const result = await this.runWatchedSearch(watch);
+        results.push(result);
+        await checkScrapeHealth(watch, result, config).catch((error) => {
+          addActivity({ type: "scrape_health_error", title: "Scrape health check failed", detail: error.message, watch_id: watch.id });
+        });
       }
       this.lastRunAt = new Date().toISOString();
       addActivity({
@@ -98,6 +103,32 @@ export class SearchScheduler {
       });
     }, delayMs);
   }
+}
+
+async function checkScrapeHealth(watch, result, config) {
+  const settings = config.scrapeHealthCheck || {};
+  if (settings.enabled === false) return;
+  const current = Number(result.result_count ?? result.results_count ?? result.added + result.updated ?? 0);
+  const previous = Number(watch.last_result_count ?? 0);
+  const minPrevious = clampNumber(settings.minPreviousResults ?? 5, 1, 10000);
+  const minRatio = Math.max(0, Math.min(1, Number(settings.minResultRatio ?? 0.2)));
+
+  const nextWatch = upsertWatchedSearch({ ...watch, last_result_count: current, last_run_at: new Date().toISOString() });
+  if (previous < minPrevious) return;
+  if (current > previous * minRatio) return;
+
+  const now = new Date();
+  const lastAlertAt = nextWatch.last_health_alert_at ? new Date(nextWatch.last_health_alert_at) : null;
+  if (lastAlertAt && now - lastAlertAt < 6 * 60 * 60 * 1000) return;
+
+  const message = `Carousell scrape for "${watch.query}" returned unexpectedly few results (${current} vs previous ${previous}). Site structure may have changed.`;
+  await notifyAlert({
+    type: "scrape_health",
+    title: "Scrape health warning",
+    message,
+    watch_id: watch.id
+  });
+  upsertWatchedSearch({ ...nextWatch, last_health_alert_at: now.toISOString() });
 }
 
 function clampNumber(value, min, max) {
