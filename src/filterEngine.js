@@ -18,6 +18,14 @@ const conditionScore = {
   unknown: 50
 };
 
+const PLACEHOLDER_PRICES = new Set([0, 1, 8, 88, 888, 8888, 9999, 12345, 99999]);
+const ACCESSORY_PATTERN = /\b(?:panel|front panel|side panel|glass panel|riser|vertical gpu kit|bracket|mount|cable|adapter|screws?|stand|tray|cover|dust filter|mesh kit|extension|sleeved cable|wood panel|tempered glass only|panel only|upgrade kit)\b/i;
+const ACCESSORY_ONLY_PATTERN = /\b(?:panel|front panel|side panel|glass panel|wood panel|riser|vertical gpu kit|bracket|mount|cable|adapter|screws?|stand|tray|cover|dust filter|mesh kit|extension|sleeved cable|tempered glass|upgrade kit)\b.{0,80}\bonly\b|\bonly\b.{0,80}\b(?:panel|riser|bracket|mount|cable|adapter|cover|tray|kit)\b|\bnot\s+(?:the\s+)?full\s+(?:case|pc|build|set)\b/i;
+const FULL_PRODUCT_PATTERN = /\b(?:full case|complete case|whole case|case included|full build|complete build|working pc|whole set)\b/i;
+const BUNDLE_PATTERN = /\b(?:bundle|full build|whole set|all for|combo|assorted|mixed parts|parts lot|pc parts)\b/i;
+const CORE_PART_PATTERN = /\b(?:gpu|graphics card|rtx|gtx|radeon|rx\s?\d{3,4}|cpu|processor|ryzen|core i[3579]|motherboard|mobo|ram|ddr[345]|ssd|nvme|psu|power supply|case|chassis|cooler|aio|fan)\b/i;
+const PROFILE_IMAGE_PATTERN = /\b(?:profiles?|avatar|user[-_]?icon|profile[-_]?pic|profile[-_]?photo|seller|pfp)\b/i;
+
 export function classifyListing(listing, filters, sellerBlacklist, config) {
   const text = `${listing.title || ""} ${listing.description || ""}`.toLowerCase();
   const reasons = [];
@@ -65,59 +73,174 @@ export function classifyListing(listing, filters, sellerBlacklist, config) {
 }
 
 export function scoreDeal(listing, config) {
-  const median = listing.market_median || config.categoryMedians[listing.category] || listing.current_price;
-  const priceRatio = median ? listing.current_price / median : 1;
-  const priceScore = Math.max(0, Math.min(100, (1.32 - priceRatio) * 110));
-  const sellerScore = Math.min(100, (listing.seller_rating || 0) * 20);
+  const price = Number(listing.current_price || 0);
+  const median = referenceMedian(listing, config);
+  const priceRatio = median > 0 ? price / median : 1;
+  const marketConfidence = marketConfidenceScore(listing, median);
+  const accessory = isAccessoryListing(listing);
+  const bundle = isBundleListing(listing);
+  const productImageScore = imageQualityScore(listing);
+  const priceScore = computePriceScore(priceRatio, marketConfidence, accessory, bundle, price);
+  const sellerScore = computeSellerScore(listing);
   const ageHours = getListingAgeHours(listing);
-  const ageScore = Math.max(0, Math.min(100, 100 - ageHours * 1.2));
+  const ageScore = Math.max(0, Math.min(100, 100 - ageHours * 1.1));
   const preference = Number(listing.training?.preference_score ?? 50);
   const preferenceScore = Math.max(0, Math.min(100, preference));
-  const badDealPenalty = preferenceScore < 35 ? (35 - preferenceScore) * 0.7 : 0;
-  const detailScore = getDetailScore(listing);
-  const suspiciousPenalty = getDealPenalty(listing);
+  const detailScore = getDetailScore(listing, productImageScore);
+  const condition = conditionScore[listing.condition] || 50;
+  const confidence = computeConfidence(listing, { median, productImageScore, detailScore, marketConfidence });
+  const riskPenalty = getDealPenalty(listing, { median, priceRatio, accessory, bundle, productImageScore, confidence });
+  const badDealPenalty = preferenceScore < 35 ? (35 - preferenceScore) * 0.75 : 0;
+
   const baseScore =
-    priceScore * 0.44 +
-    (conditionScore[listing.condition] || 50) * 0.12 +
+    priceScore * 0.34 +
+    condition * 0.1 +
     sellerScore * 0.08 +
     ageScore * 0.08 +
-    preferenceScore * 0.2 +
-    detailScore * 0.08;
-  const score = Math.round(Math.max(0, Math.min(100, baseScore - badDealPenalty - suspiciousPenalty)));
-  const estimatedNegotiationPrice = Math.round(listing.current_price * (ageHours > 336 ? 0.88 : 0.92));
+    preferenceScore * 0.18 +
+    detailScore * 0.14 +
+    productImageScore * 0.08;
+
+  const confidenceAdjustment = confidence >= 75 ? 4 : confidence >= 58 ? 0 : confidence >= 42 ? -7 : -14;
+  const score = Math.round(Math.max(0, Math.min(100, baseScore + confidenceAdjustment - badDealPenalty - riskPenalty)));
+  const estimatedNegotiationPrice = Math.round(price * (ageHours > 336 ? 0.88 : 0.92));
+  const isDeal = score >= (config.dealThreshold || 70) && confidence >= 50 && riskPenalty < 35;
 
   return {
     deal_score: score,
-    is_deal: score >= (config.dealThreshold || 70),
+    is_deal: isDeal,
     price_score: Math.round(priceScore),
     seller_score: Math.round(sellerScore),
     age_score: Math.round(ageScore),
     preference_score: Math.round(preferenceScore),
     detail_score: Math.round(detailScore),
-    penalty: Math.round(badDealPenalty + suspiciousPenalty),
+    image_score: Math.round(productImageScore),
+    confidence_score: Math.round(confidence),
+    penalty: Math.round(badDealPenalty + riskPenalty),
     estimated_negotiation_price: estimatedNegotiationPrice,
-    price_vs_median: Math.round(((listing.current_price - median) / median) * 100),
-    trend_direction: listing.current_price < median * 0.98 ? "down" : listing.current_price > median * 1.02 ? "up" : "flat"
+    price_vs_median: median > 0 ? Math.round(((price - median) / median) * 100) : null,
+    trend_direction: median > 0 && price < median * 0.98 ? "down" : median > 0 && price > median * 1.02 ? "up" : "flat",
+    risk_flags: scoreRiskFlags(listing, { accessory, bundle, productImageScore, confidence, median, priceRatio })
   };
 }
 
-function getDetailScore(listing) {
-  let score = 30;
-  if (String(listing.description || "").length >= 80) score += 25;
-  if (listing.location) score += 15;
-  if (listing.seller_url) score += 10;
-  if (Array.isArray(listing.image_urls) && listing.image_urls.length > 0) score += 10;
-  if (listing.price_source === "description") score += 10;
+function referenceMedian(listing, config) {
+  const candidates = [listing.market_median, config.categoryMedians?.[listing.category], config.categoryMedians?.electronics];
+  return Number(candidates.find((value) => Number(value) > 0) || 0);
+}
+
+function computePriceScore(priceRatio, marketConfidence, accessory, bundle, price) {
+  if (!Number.isFinite(priceRatio) || priceRatio <= 0 || price <= 0) return 25;
+  let score;
+  if (priceRatio <= 0.35) score = 96;
+  else if (priceRatio <= 0.5) score = 90;
+  else if (priceRatio <= 0.65) score = 82;
+  else if (priceRatio <= 0.8) score = 70;
+  else if (priceRatio <= 1) score = 55;
+  else if (priceRatio <= 1.18) score = 38;
+  else score = 18;
+
+  if (marketConfidence < 45) score = score * 0.72 + 12;
+  if (accessory) score = Math.min(score, 62);
+  if (bundle) score = Math.min(score, 72);
+  if (price <= 15 && !bundle) score = Math.min(score, 55);
+  return Math.max(0, Math.min(100, score));
+}
+
+function computeSellerScore(listing) {
+  const rating = Number(listing.seller_rating || 0);
+  if (rating <= 0) return listing.seller_url ? 42 : 30;
+  return Math.min(100, rating * 20);
+}
+
+function marketConfidenceScore(listing, median) {
+  if (!median) return 20;
+  const sampleSize = Number(listing.market_insight?.sample_size || listing.market_sample_size || 0);
+  if (sampleSize >= 12) return 95;
+  if (sampleSize >= 7) return 82;
+  if (sampleSize >= 4) return 66;
+  return 45;
+}
+
+function getDetailScore(listing, productImageScore = imageQualityScore(listing)) {
+  let score = 25;
+  const descriptionLength = String(listing.description || "").length;
+  if (descriptionLength >= 220) score += 25;
+  else if (descriptionLength >= 80) score += 18;
+  else if (descriptionLength >= 25) score += 8;
+  if (listing.location) score += 12;
+  if (listing.seller_url) score += 8;
+  if (productImageScore >= 70) score += 15;
+  else if (productImageScore >= 45) score += 6;
+  if (listing.price_source === "description") score += 8;
+  if (Array.isArray(listing.variations) && listing.variations.length > 0) score += 7;
   return Math.min(100, score);
 }
 
-function getDealPenalty(listing) {
+function imageQualityScore(listing) {
+  const images = Array.isArray(listing.image_urls) ? listing.image_urls : [];
+  if (images.length === 0) return 20;
+  const productImages = images.filter((url) => !PROFILE_IMAGE_PATTERN.test(String(url || "")));
+  if (productImages.length === 0) return 28;
+  if (productImages.length >= 3) return 100;
+  if (productImages.length === 2) return 86;
+  return 72;
+}
+
+function getDealPenalty(listing, context = {}) {
   const text = `${listing.title || ""} ${listing.description || ""}`.toLowerCase();
   let penalty = 0;
   if (/\b(no nego|no negotiation|fixed|firm|no lowball|lowballers ignored)\b/.test(text)) penalty += 8;
-  if (/\b(repair|faulty|spoilt|not working|for parts|issue|defect)\b/.test(text)) penalty += 15;
-  if (/\b(deposit|preorder|pre-order)\b/.test(text)) penalty += 10;
+  if (/\b(repair|faulty|spoilt|not working|for parts|issue|defect|missing|cracked|broken)\b/.test(text)) penalty += 18;
+  if (/\b(deposit|preorder|pre-order|top up|trade only|swap only)\b/.test(text)) penalty += 12;
+  if (PLACEHOLDER_PRICES.has(Number(listing.current_price || 0))) penalty += 20;
+  if (context.accessory) penalty += 15;
+  if (context.bundle) penalty += 7;
+  if (context.productImageScore < 45) penalty += 16;
+  if (context.confidence < 45) penalty += 14;
+  if (context.median && context.priceRatio < 0.35 && !context.bundle) penalty += 10;
+  if (String(listing.description || "").length < 25) penalty += 8;
   return penalty;
+}
+
+function computeConfidence(listing, context = {}) {
+  let score = 0;
+  if (Number(listing.current_price || 0) > 0 && !PLACEHOLDER_PRICES.has(Number(listing.current_price || 0))) score += 15;
+  if (context.median) score += Math.min(25, 8 + context.marketConfidence * 0.18);
+  if (context.productImageScore >= 70) score += 18;
+  else if (context.productImageScore >= 45) score += 9;
+  if (String(listing.description || "").length >= 80) score += 16;
+  else if (String(listing.description || "").length >= 25) score += 8;
+  if (listing.location) score += 9;
+  if (listing.seller_url || Number(listing.seller_rating || 0) > 0) score += 8;
+  if (listing.condition && listing.condition !== "unknown") score += 5;
+  if (Array.isArray(listing.variations) && listing.variations.length > 0) score += 4;
+  return Math.max(0, Math.min(100, score));
+}
+
+function scoreRiskFlags(listing, context = {}) {
+  const flags = [];
+  if (context.accessory) flags.push("accessory_or_upgrade_part");
+  if (context.bundle) flags.push("bundle_or_parts_lot");
+  if (context.productImageScore < 45) flags.push("weak_or_profile_only_images");
+  if (context.confidence < 50) flags.push("low_data_confidence");
+  if (!context.median) flags.push("no_reference_median");
+  if (context.median && context.priceRatio < 0.35) flags.push("too_far_below_market_verify");
+  if (String(listing.description || "").length < 25) flags.push("thin_description");
+  return flags;
+}
+
+function isAccessoryListing(listing) {
+  const text = `${listing.title || ""} ${listing.description || ""}`;
+  if (!ACCESSORY_PATTERN.test(text)) return false;
+  if (ACCESSORY_ONLY_PATTERN.test(text)) return true;
+  if (FULL_PRODUCT_PATTERN.test(text)) return false;
+  return /\b(?:riser|vertical gpu kit|bracket|mount|cable|adapter|screws?|dust filter|mesh kit|extension|sleeved cable|upgrade kit|front panel|side panel|glass panel|wood panel|tempered glass)\b/i.test(text);
+}
+
+function isBundleListing(listing) {
+  const text = `${listing.title || ""} ${listing.description || ""}`;
+  return BUNDLE_PATTERN.test(text) && CORE_PART_PATTERN.test(text);
 }
 
 function getListingAgeHours(listing) {
