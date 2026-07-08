@@ -117,6 +117,47 @@
               <h2>Search</h2>
             </div>
           </div>
+          <section id="scraper-ideas-lab" class="scraper-lab">
+            <div class="scraper-lab-header">
+              <div>
+                <p class="eyebrow">Feature branch lab</p>
+                <h3>Scraper Ideas Lab</h3>
+                <p class="section-caption">Borrowed from the reference repos: pasted start URLs, URL-level filters, and one-click exports. This branch uses the existing search API so it is safe to test before backend parser changes.</p>
+              </div>
+              <span class="badge info">feature/scraper-ideas</span>
+            </div>
+            <div class="scraper-lab-grid">
+              <label>Start URL / Carousell URL
+                <input id="scraper-lab-url" placeholder="Paste a Carousell search/category/listing URL">
+              </label>
+              <label>Condition
+                <select id="scraper-lab-condition">
+                  <option value="">Any</option>
+                  <option value="NEW">New</option>
+                  <option value="USED">Used</option>
+                </select>
+              </label>
+              <label>Distance
+                <input id="scraper-lab-range" type="number" min="1" step="1" placeholder="km">
+              </label>
+              <label>Sort
+                <select id="scraper-lab-sort">
+                  <option value="time_created,descending">Newest first</option>
+                  <option value="price,ascending">Price low to high</option>
+                  <option value="price,descending">Price high to low</option>
+                </select>
+              </label>
+            </div>
+            <div class="scraper-lab-actions">
+              <button type="button" id="scraper-lab-import" class="primary-action">Run parsed URL</button>
+              <button type="button" id="scraper-lab-copy-url">Copy generated URL</button>
+              <button type="button" id="scraper-lab-export-listings">Export listings CSV</button>
+              <button type="button" id="scraper-lab-export-deals">Export deals CSV</button>
+              <button type="button" id="scraper-lab-export-alerts">Export alerts JSON</button>
+              <button type="button" id="scraper-lab-export-history">Export price history CSV</button>
+            </div>
+            <p id="scraper-lab-status" class="meta">Tip: paste an existing Carousell URL and this will extract query/filter values into your current search UI.</p>
+          </section>
           <form id="search-form" class="search-row">
             <input id="search-input" name="query" placeholder="Search MacBook, AirPods, camera..." required>
             <input id="search-min-price" name="min_price" type="number" min="0" step="1" value="1" aria-label="Minimum price">
