@@ -11,6 +11,20 @@
     "gaming": 520,
     "audio": 260
   },
+  "categoryMedianAutoTune": {
+    "enabled": true,
+    "days": 30,
+    "minSampleSize": 3
+  },
+  "sellerReputation": {
+    "relistRatioThreshold": 0.4
+  },
+  "alertSnooze": {
+    "defaultHours": 24
+  },
+  "watchMute": {
+    "defaultHours": 24
+  },
   "telegram": {
     "enabled": false,
     "botToken": "",
