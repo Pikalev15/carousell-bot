@@ -18,9 +18,9 @@ export function computeRollingCategoryMedians(listings = [], config = {}, now = 
   const medians = {};
   const samples = {};
   for (const [category, prices] of buckets.entries()) {
-    const unique = [...new Set(prices)].sort((a, b) => a - b);
-    samples[category] = unique.length;
-    if (unique.length >= minSampleSize) medians[category] = median(unique);
+    prices.sort((a, b) => a - b);
+    samples[category] = prices.length;
+    if (prices.length >= minSampleSize) medians[category] = median(prices);
   }
   return { medians, samples, days, minSampleSize };
 }
