@@ -1,0 +1,31 @@
+{
+  "badPricer": {
+    "enabled": true,
+    "overMedianMultiplier": 1.35,
+    "baitPrices": [0, 1, 8888, 9999, 12345, 99999]
+  },
+  "dealThreshold": 70,
+  "categoryMedians": {
+    "electronics": 850,
+    "camera": 1200,
+    "gaming": 520,
+    "audio": 260
+  },
+  "telegram": {
+    "enabled": false,
+    "botToken": "",
+    "chatId": ""
+  },
+  "scheduler": {
+    "enabled": false,
+    "intervalMinutes": 30,
+    "jitterSeconds": 45,
+    "lastRunAt": null,
+    "nextRunAt": null
+  },
+  "scrapeHealthCheck": {
+    "enabled": true,
+    "minResultRatio": 0.2,
+    "minPreviousResults": 5
+  }
+}
