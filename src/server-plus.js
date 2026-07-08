@@ -148,7 +148,7 @@ async function startOriginalScheduler() {
 
 async function callOriginalJson(method, url, body) {
   await new Promise((resolve, reject) => {
-    const request = Readable.from([JSON.stringify(body || {})]);
+    const request = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
     request.method = method;
     request.url = url;
     request.headers = { host: `localhost:${port}`, "content-type": "application/json" };
@@ -174,13 +174,13 @@ async function callOriginalJson(method, url, body) {
 
 async function readRequestBody(request) {
   const chunks = [];
-  for await (const chunk of request) chunks.push(chunk);
+  for await (const chunk of request) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
 }
 
 function makeJsonRequest(original, body) {
-  const next = Readable.from([JSON.stringify(body)]);
+  const next = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
   next.method = original.method;
   next.url = original.url;
   next.headers = { ...original.headers, "content-type": "application/json" };
