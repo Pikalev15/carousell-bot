@@ -39,7 +39,7 @@ function collapseDuplicateGroups(listings) {
   return output;
 }
 
-function card(listing) {
+const duplicateAwareCard = (listing) => {
   const base = originalCardRenderer ? originalCardRenderer(listing) : "";
   const similar = Array.isArray(listing._similar_listings) ? listing._similar_listings : [];
   if (!similar.length) return base;
@@ -57,7 +57,7 @@ function card(listing) {
     </details>
   `;
   return base.replace(/<\/article>\s*$/, `${similarMarkup}</article>`);
-}
+};
 
 function renderListings() {
   const filter = document.getElementById("listing-filter").value;
@@ -68,7 +68,7 @@ function renderListings() {
   });
   const rendered = collapseDuplicateGroups(sortListings(raw, document.getElementById("listing-sort").value));
   document.getElementById("listing-list").innerHTML = rendered.length
-    ? rendered.map(card).join("")
+    ? rendered.map(duplicateAwareCard).join("")
     : `<p class="empty-state">No listings match the current filters.</p>`;
 }
 
@@ -76,7 +76,7 @@ function renderSearch() {
   const raw = sortListings(applyPriceFilters(state?.searchResults || [], "search"), document.getElementById("search-sort").value);
   const rendered = collapseDuplicateGroups(raw);
   document.getElementById("search-results").innerHTML = rendered.length
-    ? rendered.map(card).join("")
+    ? rendered.map(duplicateAwareCard).join("")
     : `<p class="empty-state">No visible listings in this price range. Try raising the max, lowering the min, or searching a more specific phrase.</p>`;
   if (state?.lastQuery) {
     document.getElementById("search-summary").textContent = searchSummaryText(raw.length, rendered.length, state.lastQuery);
@@ -303,7 +303,7 @@ function searchSummaryText(rawCount, renderedCount, query) {
 }
 
 globalThis.collapseDuplicateGroups = collapseDuplicateGroups;
-globalThis.card = card;
+globalThis.card = duplicateAwareCard;
 globalThis.openDetails = openDetails;
 globalThis.renderListings = renderListings;
 globalThis.renderSearch = renderSearch;
