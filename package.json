@@ -8,12 +8,13 @@
     "start": "node src/server.js",
     "dev": "node src/server.js",
     "migrate": "node scripts/migrate-json-to-sqlite.js",
-    "test": "node --test"
+    "test": "node --test",
+    "postinstall": "playwright install chromium"
   },
   "engines": {
     "node": ">=22.5"
   },
   "dependencies": {
-    "playwright-core": "^1.61.1"
+    "playwright": "^1.61.1"
   }
 }

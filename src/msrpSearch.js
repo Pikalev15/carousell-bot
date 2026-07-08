@@ -4,18 +4,29 @@ const CHROME_PATHS = [
   process.env.CHROME_PATH,
   process.env.GOOGLE_CHROME_BIN,
   process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-  "/usr/bin/google-chrome",
-  "/usr/bin/google-chrome-stable",
-  "/opt/google/chrome/chrome",
-  "/usr/bin/chromium",
-  "/usr/bin/chromium-browser",
-  "/snap/bin/chromium",
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
-  "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-  "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"
+  async function newBrowserPage(options = {}) {
+  let chromium;
+
+  try {
+    ({ chromium } = await import("playwright"));
+  } catch {
+    throw new Error("playwright is not installed. Run npm install.");
+  }
+
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--no-sandbox"]
+  });
+
+  const page = await browser.newPage({
+    locale: "en-SG",
+    timezoneId: "Asia/Singapore",
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+  });
+
+  return { browser, page };
+}
 ].filter(Boolean);
 
 const BLOCKED_PRICE_CONTEXT = /\b(?:carousell|used|second hand|preowned|pre-owned|deposit|delivery|shipping|coupon|monthly|installment)\b/i;
@@ -97,9 +108,9 @@ function buildMsrpQuery(title) {
 async function newBrowserPage(options = {}) {
   let chromium;
   try {
-    ({ chromium } = await import("playwright-core"));
+    ({ chromium } = await import("playwright"));
   } catch {
-    throw new Error("playwright-core is not installed. Run npm.cmd install.");
+    throw new Error("playwright is not installed. Run npm.cmd install.");
   }
 
   const executablePath = options.executablePath || (await findChromePath());
