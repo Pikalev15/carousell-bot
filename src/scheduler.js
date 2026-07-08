@@ -47,7 +47,7 @@ export class SearchScheduler {
     const startedAt = new Date().toISOString();
     addActivity({ type: "scrape_run", title: "Scheduler run started", detail: "Running active watched searches", timestamp: startedAt });
     try {
-      const watches = (await getWatchedSearches()).filter((watch) => watch.active);
+      const watches = (await getWatchedSearches()).filter((watch) => watch.active && !isWatchMuted(watch));
       const results = [];
       for (const watch of watches) {
         await delay(randomJitter(config.scheduler?.jitterSeconds));
@@ -129,6 +129,10 @@ async function checkScrapeHealth(watch, result, config) {
     watch_id: watch.id
   });
   upsertWatchedSearch({ ...nextWatch, last_health_alert_at: now.toISOString() });
+}
+
+function isWatchMuted(watch) {
+  return watch?.muted_until && new Date(watch.muted_until).getTime() > Date.now();
 }
 
 function clampNumber(value, min, max) {
