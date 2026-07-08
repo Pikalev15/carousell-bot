@@ -189,10 +189,14 @@ async function callOriginalJson(method, url, body) {
         chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
       },
       end(chunk) {
-        if (chunk) this.write(chunk);
-        const raw = Buffer.concat(chunks).toString("utf8");
-        if (this.statusCode >= 400) return reject(new Error(raw || `Original handler failed (${this.statusCode})`));
-        resolve(raw ? JSON.parse(raw) : {});
+        try {
+          if (chunk) this.write(chunk);
+          const raw = Buffer.concat(chunks).toString("utf8");
+          if (this.statusCode >= 400) return reject(new Error(raw || `Original handler failed (${this.statusCode})`));
+          resolve(raw ? JSON.parse(raw) : {});
+        } catch (error) {
+          reject(error);
+        }
       },
       on(event, handler) {
         if (event === "error") this._onError = handler;
