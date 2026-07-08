@@ -113,7 +113,7 @@ async function openDetails(listing) {
       <p><strong>Seller</strong><span>${sellerMarkup(listing)} (${listing.seller_rating} stars)</span></p>
       <p><strong>Location</strong><span>${displayLocation(listing)}</span></p>
       <p><strong>Condition</strong><span>${escapeHtml(listing.condition)}</span></p>
-      <p><strong>Classification</strong><span>${escapeHtml(listing.classification.post_type)}</span></p>
+      <p><strong>Classification</strong><span>${escapeHtml(listing.classification?.post_type || "")}</span></p>
       <p><strong>Market</strong><span>${marketInsightText(listing.market_insight)}</span></p>
       <p><strong>Seller history</strong><span>${reputation ? `${reputation.total_listings} listings, ${Math.round(Number(reputation.relist_ratio || 0) * 100)}% relist-linked` : "Not enough seller history"}</span></p>
       <p><strong>Why this score?</strong><span>${escapeHtml(listing.score?.explanation?.summary || "No score explanation available.")}</span></p>
