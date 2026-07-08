@@ -1,34 +1,7 @@
 import { parseMoney } from "./currency.js";
 
-const CHROME_PATHS = [
-  process.env.CHROME_PATH,
-  process.env.GOOGLE_CHROME_BIN,
-  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-  async function newBrowserPage(options = {}) {
-  let chromium;
-
-  try {
-    ({ chromium } = await import("playwright"));
-  } catch {
-    throw new Error("playwright is not installed. Run npm install.");
-  }
-
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox"]
-  });
-
-  const page = await browser.newPage({
-    locale: "en-SG",
-    timezoneId: "Asia/Singapore",
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
-  });
-
-  return { browser, page };
-}
-].filter(Boolean);
-
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
 const BLOCKED_PRICE_CONTEXT = /\b(?:carousell|used|second hand|preowned|pre-owned|deposit|delivery|shipping|coupon|monthly|installment)\b/i;
 
 export async function lookupMsrpFromGoogle(title, options = {}) {
@@ -105,39 +78,22 @@ function buildMsrpQuery(title) {
   return `${String(title || "").replace(/\s+/g, " ").trim()} MSRP price Singapore`;
 }
 
-async function newBrowserPage(options = {}) {
+async function newBrowserPage() {
   let chromium;
   try {
     ({ chromium } = await import("playwright"));
   } catch {
-    throw new Error("playwright is not installed. Run npm.cmd install.");
+    throw new Error("playwright is not installed. Run npm install.");
   }
 
-  const executablePath = options.executablePath || (await findChromePath());
-  if (!executablePath) throw new Error("Chrome or Chromium was not found. Install Google Chrome in the Linux environment or set CHROME_PATH to your Chrome executable.");
-
   const browser = await chromium.launch({
-    executablePath,
     headless: true,
     args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
   });
   const page = await browser.newPage({
     locale: "en-SG",
     timezoneId: "Asia/Singapore",
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
+    userAgent: USER_AGENT
   });
   return { browser, page };
-}
-
-async function findChromePath() {
-  const { access } = await import("node:fs/promises");
-  for (const candidate of CHROME_PATHS) {
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      // Try the next known browser path.
-    }
-  }
-  return "";
 }
