@@ -134,7 +134,7 @@ async function pollSearchJob(id, query) {
     }
     if (job.status === "complete") {
       await load();
-      state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, query)), "search");
+      state.searchResults = applyPriceFilters((state?.listings || []).filter((listing) => matchesQuery(listing, query)), "search");
       renderSearch();
       const nextRaw = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
       const nextRendered = collapseDuplicateGroups(nextRaw);
