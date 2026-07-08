@@ -1,6 +1,6 @@
 # Data Quality and Backend Export Notes
 
-This branch adds the data-quality layer that should sit between raw Carousell scrape results and deal scoring/export.
+The data-quality layer sits between raw Carousell scrape results and deal scoring/export.
 
 ## Added modules
 
@@ -15,25 +15,37 @@ This branch adds the data-quality layer that should sit between raw Carousell sc
   - flattens enriched listings for CSV export
 
 - `src/server-plus.js`
-  - optional backend wrapper around the existing server
-  - adds export endpoints without changing the default server path
-  - adds startUrl parsing/proxy support for `/api/search`
+  - default backend runtime used by `npm start`, `npm run dev`, and `npm run start:plus`
+  - wraps the core server with export endpoints and startUrl support
+  - keeps the old core server available as `npm run start:core`
 
-## New scripts
+- `src/startUrlSearch.js`
+  - handles Carousell search/category/listing start URLs before handing results back to the normal store/scoring flow
+
+## Scripts
 
 ```bash
+npm start
+npm run dev
+npm run start:plus
+npm run start:core
 npm run clean:images
 npm run enrich:data
+npm run medians:default
 npm run export:data
-npm run start:plus
+npm test
 ```
 
-## Optional backend routes
+`npm start`, `npm run dev`, and `npm run start:plus` all run the full default runtime: `src/server-plus.js`.
+
+`npm run start:core` runs `src/server.js` directly and is mainly a debugging escape hatch.
+
+## Backend routes
 
 Run:
 
 ```bash
-npm run start:plus
+npm start
 ```
 
 Then use:
@@ -50,14 +62,15 @@ Then use:
 
 ```bash
 git fetch origin
-git checkout fix/listing-data-quality
+git checkout main
 git pull
 npm install
 npm test
 npm run clean:images
 npm run enrich:data
+npm run medians:default
 npm run export:data
-npm run start:plus
+npm start
 ```
 
 Then search again and compare the generated files in:
@@ -66,6 +79,12 @@ Then search again and compare the generated files in:
 data/exports/
 ```
 
+## Data notes
+
+- `data/config.example.json` is the committed safe template.
+- `data/config.json`, `data/search-history.json`, `data/labels.json`, exports, cache files, and database files are local runtime state and should not be committed.
+- `data/listings.json` is intentional mock/demo seed data in this repo, not real scraped data.
+
 ## Important note
 
-`npm start` still runs the original app server so scheduler/Telegram behavior is not accidentally changed. Use `npm run start:plus` when you want the optional backend export/startUrl wrapper.
+The export/startUrl wrapper is no longer optional. It is the normal default runtime. Use `npm run start:core` only when debugging the older core server path.

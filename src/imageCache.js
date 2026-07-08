@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,29 +8,27 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const cacheDir = path.resolve(__dirname, "..", "data", "image-cache");
 const MAX_BYTES = 8 * 1024 * 1024;
+const ALLOWED_IMAGE_HOSTS = [
+  "carousell.sg",
+  "carousell.com",
+  "karousell.com"
+];
 
 export function proxiedImageUrl(url) {
   return isCacheableImageUrl(url) ? `/api/images?url=${encodeURIComponent(url)}` : url || "";
 }
 
 export function isCacheableImageUrl(rawUrl) {
-  const text = String(rawUrl || "").trim();
-  if (!text) return false;
-  let parsed;
-  try {
-    parsed = new URL(text);
-  } catch {
-    return false;
-  }
-  if (!["http:", "https:"].includes(parsed.protocol)) return false;
+  const parsed = parseImageUrl(rawUrl);
+  if (!parsed) return false;
   const lower = parsed.href.toLowerCase();
   if (/\/profiles?\//i.test(lower)) return false;
   if (/avatar|profile|logo|user-profile|seller-photo/i.test(lower)) return false;
-  return /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(lower) || /carousell|carousel|cloudfront|imgix|images?/i.test(lower);
+  return isAllowedImageHost(parsed.hostname);
 }
 
 export async function getCachedImage(rawUrl, settings = {}) {
-  if (!isCacheableImageUrl(rawUrl)) throw new Error("Unsupported image URL");
+  await assertSafeImageUrl(rawUrl);
   if (settings.enabled === false) return fetchImage(rawUrl);
 
   await mkdir(cacheDir, { recursive: true });
@@ -56,6 +56,19 @@ export async function getCachedImage(rawUrl, settings = {}) {
   await writeFile(dataPath, fetched.body);
   await writeFile(metaPath, JSON.stringify({ url: rawUrl, content_type: fetched.contentType, cached_at: new Date().toISOString() }, null, 2));
   return { ...fetched, source: "network" };
+}
+
+async function assertSafeImageUrl(rawUrl) {
+  const parsed = parseImageUrl(rawUrl);
+  if (!parsed || !isCacheableImageUrl(rawUrl)) throw new Error("Unsupported image URL");
+  if (isPrivateAddress(parsed.hostname)) throw new Error("Refusing to fetch private/internal image host");
+
+  const records = await lookup(parsed.hostname, { all: true }).catch((error) => {
+    throw new Error(`Image host DNS lookup failed: ${error.message}`);
+  });
+  if (records.some((record) => isPrivateAddress(record.address))) {
+    throw new Error("Refusing to fetch image host that resolves to a private/internal address");
+  }
 }
 
 async function fetchImage(rawUrl) {
@@ -94,4 +107,32 @@ async function cleanupImageCache(settings = {}) {
     await unlink(`${base}.bin`).catch(() => {});
     await unlink(`${base}.json`).catch(() => {});
   }
+}
+
+function parseImageUrl(rawUrl) {
+  const text = String(rawUrl || "").trim();
+  if (!text) return null;
+  try {
+    const parsed = new URL(text);
+    if (!["http:", "https:"].includes(parsed.protocol)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function isAllowedImageHost(hostname) {
+  const host = String(hostname || "").toLowerCase();
+  return ALLOWED_IMAGE_HOSTS.some((allowed) => host === allowed || host.endsWith(`.${allowed}`));
+}
+
+function isPrivateAddress(value) {
+  const address = String(value || "").replace(/^\[|\]$/g, "").toLowerCase();
+  const family = isIP(address);
+  if (!family) return false;
+  if (family === 4) {
+    const [a, b] = address.split(".").map(Number);
+    return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || a === 0;
+  }
+  return address === "::1" || address === "::" || address.startsWith("fc") || address.startsWith("fd") || address.startsWith("fe80:");
 }

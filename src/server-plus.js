@@ -1,6 +1,6 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
-import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
+import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
 import { buildListings, handleTelegramCommand, server } from "./server.js";
 import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
@@ -15,6 +15,7 @@ server.removeAllListeners("request");
 server.on("request", async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
+    if (url.pathname.startsWith("/api/") && !authorizeDashboardRequest(request, response, url)) return;
 
     if (request.method === "GET" && url.pathname === "/api/listings") {
       const state = await getState();
@@ -137,6 +138,7 @@ server.on("request", async (request, response) => {
 });
 
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  warnIfDashboardUnauthenticated();
   server.listen(port, () => {
     console.log(`Carousell Bot running at http://localhost:${port}`);
     console.log("Plus routes enabled: /api/export/listings.csv, /api/export/deals.csv, /api/export/alerts.json, /api/export/price-history.csv, /api/start-urls/parse");
@@ -174,8 +176,7 @@ async function callOriginalJson(method, url, body) {
     const request = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
     request.method = method;
     request.url = url;
-    request.headers = { host: `localhost:${port}`, "content-type": "application/json" };
-    const chunks = [];
+    request.headers = { host: `localhost:${port}`, "content-type": "application/json", ...dashboardAuthHeaders() };
 
     const response = {
       headersSent: false,
@@ -213,6 +214,14 @@ async function readRequestBody(request) {
   for await (const chunk of request) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
+}
+
+function makeJsonRequest(original, body) {
+  const next = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
+  next.method = original.method;
+  next.url = original.url;
+  next.headers = { ...original.headers, "content-type": "application/json", ...dashboardAuthHeaders() };
+  return next;
 }
 
 function sendCsv(response, filename, csv) {
