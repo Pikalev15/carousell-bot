@@ -168,7 +168,9 @@ export function upsertWatchedSearch(input) {
     active: input.active === undefined ? existing?.active ?? true : Boolean(input.active),
     created_at: existing?.created_at || now,
     updated_at: now,
-    last_run_at: input.last_run_at || existing?.last_run_at || null
+    last_run_at: input.last_run_at || existing?.last_run_at || null,
+    last_result_count: input.last_result_count ?? existing?.last_result_count ?? null,
+    last_health_alert_at: input.last_health_alert_at || existing?.last_health_alert_at || null
   };
   if (!next.query) throw new Error("query is required");
   db.prepare(`
@@ -618,7 +620,9 @@ function upsertJsonWatchedSearch(input) {
     active: input.active === undefined ? existing?.active ?? true : Boolean(input.active),
     created_at: existing?.created_at || now,
     updated_at: now,
-    last_run_at: input.last_run_at || existing?.last_run_at || null
+    last_run_at: input.last_run_at || existing?.last_run_at || null,
+    last_result_count: input.last_result_count ?? existing?.last_result_count ?? null,
+    last_health_alert_at: input.last_health_alert_at || existing?.last_health_alert_at || null
   };
   if (!next.query) throw new Error("query is required");
   if (existingIndex >= 0) watches[existingIndex] = next;
@@ -697,6 +701,12 @@ function withConfigDefaults(config) {
       maxAgeDays: 14,
       maxFiles: 500,
       ...(config?.imageCache || {})
+    },
+    scrapeHealthCheck: {
+      enabled: true,
+      minResultRatio: 0.2,
+      minPreviousResults: 5,
+      ...(config?.scrapeHealthCheck || {})
     },
     telegram: {
       botToken: "",
