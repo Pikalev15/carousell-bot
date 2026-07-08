@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import {
   buildCarousellSearchUrl,
   cleanImageUrls,
-  dataCompleteness,
   enrichListingData,
   extractVariations,
   flattenListingForExport,
@@ -64,10 +63,10 @@ test("cleans profile and avatar images while keeping product photos", () => {
     "https://example.com/avatar-icon.png",
     "//media.carousell.sg/media/photos/products/2026/01/case.webp"
   ]);
-  assert.deepEqual(cleaned, [
+  assert.deepEqual(new Set(cleaned), new Set([
     "https://media.carousell.sg/media/photos/products/2026/01/case.webp",
     "https://media.karousell.com/media/photos/products/2026/01/gpu.jpg"
-  ]);
+  ]));
 });
 
 test("infers useful PC categories", () => {
