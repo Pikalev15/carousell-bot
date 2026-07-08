@@ -1,7 +1,9 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
+import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
+import { scoreDeal } from "./filterEngine.js";
 import { buildListings, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
 import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
@@ -74,14 +76,14 @@ server.on("request", async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/listings") {
       const state = await getState();
-      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), filterOptions(url)));
+      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), filterOptions(url)), state.config);
       sendJson(response, 200, listings);
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/api/deals") {
       const state = await getState();
-      const deals = scopedListings(buildListings(state))
+      const deals = scopedListings(buildListings(state), state.config)
         .filter((listing) => !listing.classification.is_filtered)
         .filter((listing) => listing.score.is_deal);
       sendJson(response, 200, deals);
@@ -90,14 +92,14 @@ server.on("request", async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/export/listings.csv") {
       const state = await getState();
-      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), filterOptions(url))).map(flattenListingForExport);
+      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), filterOptions(url)), state.config).map(flattenListingForExport);
       sendCsv(response, "carousell-listings.csv", toCsv(listings));
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/api/export/deals.csv") {
       const state = await getState();
-      const deals = scopedListings(buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: false }))
+      const deals = scopedListings(buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: false }), state.config)
         .filter((listing) => !listing.classification?.is_filtered)
         .filter((listing) => listing.score?.is_deal)
         .map(flattenListingForExport);
@@ -112,7 +114,7 @@ server.on("request", async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/export/price-history.csv") {
       const state = await getState();
-      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: true }));
+      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: true }), state.config);
       const rows = [];
       for (const listing of listings) {
         for (const item of await getMergedPriceHistory(listing.id)) {
@@ -176,13 +178,13 @@ server.on("request", async (request, response) => {
             maxAgeHours: nextBody.max_age_hours,
             location: nextBody.location,
             includeFiltered: Boolean(nextBody.include_filtered ?? true)
-          })),
+          }), state.config),
           history: state.searches || []
         });
         return;
       }
       const payload = await callOriginalJson("POST", request.url, body);
-      if (Array.isArray(payload?.results)) payload.results = scopedListings(payload.results);
+      if (Array.isArray(payload?.results)) payload.results = scopedListings(payload.results, await readJson("config"));
       sendJson(response, 200, payload);
       return;
     }
@@ -206,7 +208,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
 async function handleTelegramCommand(text) {
   if (typeof text === "object") return coreHandleTelegramCommand(text);
   const [command, ...parts] = String(text || "").trim().split(/\s+/);
-  const args = parts.join(" ").trim();
   if (command === "/snooze") {
     const [listingId, duration] = parts;
     if (!listingId) return "Usage: /snooze <listing_id> [duration]";
@@ -225,8 +226,9 @@ async function handleTelegramCommand(text) {
   return coreHandleTelegramCommand(text);
 }
 
-function scopedListings(listings) {
-  return applyScopedDuplicateInfo(listings || [], { overrides: getDuplicateOverrides() });
+function scopedListings(listings, config = {}) {
+  const grouped = applyScopedDuplicateInfo(listings || [], { overrides: getDuplicateOverrides() });
+  return applyRollingCategoryMedians(grouped, config, scoreDeal);
 }
 
 function filterOptions(url) {
