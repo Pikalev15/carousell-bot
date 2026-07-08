@@ -1,3 +1,9 @@
+(() => {
+  const script = document.createElement("script");
+  script.src = "/duplicate-ui.js";
+  document.currentScript?.insertAdjacentElement("afterend", script);
+})();
+
 const REFINED_FEEDBACK_OPTIONS = [
   ["great_deal", "Great deal"],
   ["good_deal", "Good deal"],
