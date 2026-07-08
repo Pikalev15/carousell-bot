@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
+import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
 import { buildListings, handleTelegramCommand, server } from "./server.js";
 import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
@@ -15,16 +16,32 @@ server.on("request", async (request, response) => {
   try {
     const url = new URL(request.url, `http://${request.headers.host}`);
 
+    if (request.method === "GET" && url.pathname === "/api/listings") {
+      const state = await getState();
+      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), filterOptions(url)));
+      sendJson(response, 200, listings);
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/deals") {
+      const state = await getState();
+      const deals = scopedListings(buildListings(state))
+        .filter((listing) => !listing.classification.is_filtered)
+        .filter((listing) => listing.score.is_deal);
+      sendJson(response, 200, deals);
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/export/listings.csv") {
       const state = await getState();
-      const listings = buildListings(state, url.searchParams.get("q"), filterOptions(url)).map(flattenListingForExport);
+      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), filterOptions(url))).map(flattenListingForExport);
       sendCsv(response, "carousell-listings.csv", toCsv(listings));
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/api/export/deals.csv") {
       const state = await getState();
-      const deals = buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: false })
+      const deals = scopedListings(buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: false }))
         .filter((listing) => !listing.classification?.is_filtered)
         .filter((listing) => listing.score?.is_deal)
         .map(flattenListingForExport);
@@ -39,7 +56,7 @@ server.on("request", async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/export/price-history.csv") {
       const state = await getState();
-      const listings = buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: true });
+      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: true }));
       const rows = [];
       for (const listing of listings) {
         for (const item of getPriceHistory(listing.id)) {
@@ -96,18 +113,20 @@ server.on("request", async (request, response) => {
           updated: search.updated,
           hydration_job: null,
           warning: null,
-          results: buildListings(state, query, {
+          results: scopedListings(buildListings(state, query, {
             minPrice: nextBody.min_price ?? 1,
             maxPrice: nextBody.max_price,
             maxAgeHours: nextBody.max_age_hours,
             location: nextBody.location,
             includeFiltered: Boolean(nextBody.include_filtered ?? true)
-          }),
+          })),
           history: state.searches || []
         });
         return;
       }
-      await originalHandler(makeJsonRequest(request, body), response);
+      const payload = await callOriginalJson("POST", request.url, body);
+      if (Array.isArray(payload?.results)) payload.results = scopedListings(payload.results);
+      sendJson(response, 200, payload);
       return;
     }
 
@@ -124,6 +143,10 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   });
   startOriginalScheduler().catch((error) => console.warn(`Scheduler failed to start: ${error.message}`));
   startTelegramCommandPolling(handleTelegramCommand).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
+}
+
+function scopedListings(listings) {
+  return applyScopedDuplicateInfo(listings || []);
 }
 
 function filterOptions(url) {
@@ -147,20 +170,29 @@ async function startOriginalScheduler() {
 }
 
 async function callOriginalJson(method, url, body) {
-  await new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     const request = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
     request.method = method;
     request.url = url;
     request.headers = { host: `localhost:${port}`, "content-type": "application/json" };
+    const chunks = [];
 
     const response = {
       headersSent: false,
-      writeHead() {
+      statusCode: 200,
+      writeHead(status) {
         this.headersSent = true;
+        this.statusCode = status;
         return this;
       },
-      end() {
-        resolve();
+      write(chunk) {
+        chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+      },
+      end(chunk) {
+        if (chunk) this.write(chunk);
+        const raw = Buffer.concat(chunks).toString("utf8");
+        if (this.statusCode >= 400) return reject(new Error(raw || `Original handler failed (${this.statusCode})`));
+        resolve(raw ? JSON.parse(raw) : {});
       },
       on(event, handler) {
         if (event === "error") this._onError = handler;
@@ -177,14 +209,6 @@ async function readRequestBody(request) {
   for await (const chunk of request) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
-}
-
-function makeJsonRequest(original, body) {
-  const next = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
-  next.method = original.method;
-  next.url = original.url;
-  next.headers = { ...original.headers, "content-type": "application/json" };
-  return next;
 }
 
 function sendCsv(response, filename, csv) {
