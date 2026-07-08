@@ -1,34 +1,9 @@
 import { parseMoney } from "./currency.js";
 
 const CAROUSELL_BASE_URL = "https://www.carousell.sg";
-const CHROME_PATHS = [
-  process.env.CHROME_PATH,
-  process.env.GOOGLE_CHROME_BIN,
-  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-async function newBrowserPage(options = {}) {
-  let chromium;
-
-  try {
-    ({ chromium } = await import("playwright"));
-  } catch {
-    throw new Error("playwright is not installed. Run npm install.");
-  }
-
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox"]
-  });
-
-  const page = await browser.newPage({
-    locale: "en-SG",
-    timezoneId: "Asia/Singapore",
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
-  });
-
-  return { browser, page };
-}
-].filter(Boolean);
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
+const EXCLUDED_IMAGE_PATTERN = /(avatar|profile[-_]?(pic|photo|image)|user[-_]?icon|placeholder|sprite|favicon|\blogo\b|blank\.gif|1x1|loading[-_]?spinner|badge|star-rating|verified-icon)/i;
 
 export async function searchCarousell(query, options = {}) {
   const limit = options.limit === "all" ? Infinity : Number(options.limit || 24);
@@ -36,7 +11,7 @@ export async function searchCarousell(query, options = {}) {
   const pageData = await fetchWithBrowser(searchUrl, { ...options, limit });
   const found = new Map();
 
-  for (const listing of pageData.domListings) {
+  for (const listing of pageData.domListings || []) {
     const normalized = normalizeListing({ ...listing, query });
     if (normalized) found.set(normalized.carousell_id, normalized);
   }
@@ -111,7 +86,6 @@ export async function refreshCarousellListingDetails(listing) {
 
 async function fetchWithBrowser(url, options = {}) {
   const { page, browser } = await newBrowserPage(options);
-
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
     await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
@@ -141,7 +115,7 @@ async function fetchWithBrowser(url, options = {}) {
         const add = (value) => {
           if (!value) return;
           for (const candidate of String(value).split(",")) {
-            const url = candidate.trim().split(/\s+/)[0].replace(/^['"]|['"]$/g, "");
+            const url = candidate.trim().split(/\s+/)[0].replace(/^["']|["']$/g, "");
             if (url && !urls.includes(url)) urls.push(url);
           }
         };
@@ -156,16 +130,18 @@ async function fetchWithBrowser(url, options = {}) {
             add(image.getAttribute("data-lazy-src"));
           });
           root.querySelectorAll?.("[style*='background']").forEach((element) => {
-            const match = String(element.getAttribute("style") || "").match(/url\((['"]?)(.*?)\1\)/i);
+            const match = String(element.getAttribute("style") || "").match(/url\((["']?)(.*?)\1\)/i);
             add(match?.[2]);
           });
         }
         return urls;
       }
-    });
+    }, resolveAnchorLimit(options));
+
     if (options.hydrateDetails !== false) {
       domListings = await enrichListingDetails(browser, domListings, options.limit || 24, options);
     }
+
     return {
       html: await page.content(),
       domListings
@@ -179,21 +155,15 @@ export function extractListingsFromHtml(html, query) {
   const nextData = extractNextData(html);
   const found = new Map();
 
-  if (nextData) {
-    collectListingObjects(nextData, found, query);
-  }
-
-  if (found.size === 0) {
-    collectListingsFromAnchors(html, found, query);
-  }
+  if (nextData) collectListingObjects(nextData, found, query);
+  if (found.size === 0) collectListingsFromAnchors(html, found, query);
 
   return [...found.values()];
 }
 
 function extractNextData(html) {
-  const match = html.match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
+  const match = String(html || "").match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i);
   if (!match) return null;
-
   try {
     return JSON.parse(decodeHtml(match[1]));
   } catch {
@@ -230,15 +200,13 @@ function collectListingObjects(value, found, query) {
     if (normalized) found.set(normalized.carousell_id, normalized);
   }
 
-  for (const child of Object.values(value)) {
-    collectListingObjects(child, found, query);
-  }
+  for (const child of Object.values(value)) collectListingObjects(child, found, query);
 }
 
 function collectListingsFromAnchors(html, found, query) {
   const anchorPattern = /<a\b[^>]*href=["']([^"']*\/p\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   let match;
-  while ((match = anchorPattern.exec(html))) {
+  while ((match = anchorPattern.exec(String(html || "")))) {
     const href = decodeHtml(match[1]);
     const text = stripTags(match[2]).replace(/\s+/g, " ").trim();
     const price = parsePrice(text);
@@ -248,46 +216,6 @@ function collectListingsFromAnchors(html, found, query) {
   }
 }
 
-const EXCLUDED_IMAGE_PATTERN = /(avatar|profile[-_]?(pic|photo|image)|user[-_]?icon|placeholder|sprite|favicon|\blogo\b|blank\.gif|1x1|loading[-_]?spinner|badge|star-rating|verified-icon)/i;
-
-function normalizeImageUrl(value) {
-  const url = String(value || "").trim();
-  if (!url) return "";
-  if (url.startsWith("//")) return `https:${url}`;
-  if (url.startsWith("/")) return `${CAROUSELL_BASE_URL}${url}`;
-  if (/^https?:\/\//i.test(url)) return url;
-  return "";
-}
-
-function mergeImageUrls(...sources) {
-  const urls = [];
-  for (const source of sources) {
-    if (!Array.isArray(source)) continue;
-    for (const raw of source) {
-      const url = normalizeImageUrl(raw);
-      if (!url || urls.includes(url)) continue;
-      if (EXCLUDED_IMAGE_PATTERN.test(url)) continue;
-      urls.push(url);
-    }
-  }
-  return urls.slice(0, 6);
-}
-
-function extractImageUrlsFromHtml(html) {
-  const source = String(html || "");
-  const urls = [];
-  const attrPattern = /(?:src|data-src|data-original|data-lazy-src|srcset)=["']([^"']+)["']/gi;
-  let match;
-  while ((match = attrPattern.exec(source))) {
-    const value = decodeHtml(match[1]);
-    for (const candidate of value.split(",")) {
-      const url = candidate.trim().split(/\s+/)[0];
-      if (url) urls.push(url);
-    }
-  }
-  return urls;
-}
-
 function normalizeListing(input) {
   const cardText = String(input.cardText || "");
   const parsedCard = parseCardText(cardText);
@@ -295,13 +223,14 @@ function normalizeListing(input) {
   const url = normalizeUrl(input.url);
   if (!title || title.length < 3 || !url) return null;
   if (/^(buyer protection|instantbuy|chat|like|share)$/i.test(title)) return null;
+
   const cardPrice = parsePrice(input.price || cardText);
   const detailPrice = isPlaceholderPrice(cardPrice) ? extractRealPriceFromDescription(input.description || "") : 0;
   const price = detailPrice || cardPrice;
   const listedAgeMinutes = input.listedAgeMinutes ?? parsedCard.listedAgeMinutes ?? null;
   const location = cleanLocation(input.location || extractLocation(input.description || cardText, "", input.description || ""));
-
   const carousellId = input.id || url.match(/\/p\/[^/]+-(\d+)/)?.[1] || stableId(`${title}-${url}`);
+
   return {
     carousell_id: `web-${carousellId}`,
     title: title === "Buyer Protection" && parsedCard.title ? parsedCard.title : title,
@@ -327,13 +256,11 @@ function normalizeListing(input) {
 
 async function enrichListingDetails(browser, listings, limit, options = {}) {
   const seen = new Set();
-  const candidates = listings
-    .slice(0, limit)
-    .filter((listing) => {
-      if (!listing.url || seen.has(listing.url)) return false;
-      seen.add(listing.url);
-      return true;
-    });
+  const candidates = listings.slice(0, limit).filter((listing) => {
+    if (!listing.url || seen.has(listing.url)) return false;
+    seen.add(listing.url);
+    return true;
+  });
   const concurrency = Math.max(1, Math.min(3, Number(options.detailConcurrency || 2)));
   const jitterMs = Math.max(0, Number(options.detailJitterMs || 0));
   const enriched = new Array(candidates.length);
@@ -352,19 +279,11 @@ async function enrichListingDetails(browser, listings, limit, options = {}) {
   return enriched.filter(Boolean);
 }
 
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function hydrateListingDetail(browser, listing) {
   const parsed = parseCardText(listing.cardText || "");
   let page;
   try {
-    page = await browser.newPage({
-      locale: "en-SG",
-      timezoneId: "Asia/Singapore",
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
-    });
+    page = await browser.newPage({ locale: "en-SG", timezoneId: "Asia/Singapore", userAgent: USER_AGENT });
     await page.goto(listing.url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForLoadState("networkidle", { timeout: 9000 }).catch(() => {});
     await expandDetailSections(page);
@@ -392,11 +311,7 @@ async function hydrateListingDetail(browser, listing) {
 async function hydrateStoredListingDetail(browser, listing) {
   let page;
   try {
-    page = await browser.newPage({
-      locale: "en-SG",
-      timezoneId: "Asia/Singapore",
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
-    });
+    page = await browser.newPage({ locale: "en-SG", timezoneId: "Asia/Singapore", userAgent: USER_AGENT });
     await page.goto(normalizeUrl(listing.carousell_url || listing.url), { waitUntil: "domcontentloaded", timeout: 30000 });
     await page.waitForLoadState("networkidle", { timeout: 9000 }).catch(() => {});
     await expandDetailSections(page);
@@ -418,10 +333,7 @@ async function hydrateStoredListingDetail(browser, listing) {
       scraped_at: new Date().toISOString()
     };
   } catch {
-    return {
-      ...listing,
-      hydration_error_at: new Date().toISOString()
-    };
+    return { ...listing, hydration_error_at: new Date().toISOString() };
   } finally {
     await page?.close().catch(() => {});
   }
@@ -443,21 +355,12 @@ function extractSellerFromDetails(details, fallbackName = "") {
   });
   if (candidate) {
     const name = cleanSellerName(candidate.text);
-    return {
-      name,
-      id: name ? `carousell-${stableId(name)}` : "",
-      url: candidate.href || ""
-    };
+    return { name, id: name ? `carousell-${stableId(name)}` : "", url: candidate.href || "" };
   }
-
   const text = `${details.jsonLd || ""}\n${details.bodyText || ""}`;
   const usernameMatch = text.match(/"username"\s*:\s*"([^"]+)"/i) || text.match(/"name"\s*:\s*"([^"]+)"/i);
   const name = cleanSellerName(usernameMatch?.[1] || fallbackName);
-  return {
-    name,
-    id: name ? `carousell-${stableId(name)}` : "",
-    url: ""
-  };
+  return { name, id: name ? `carousell-${stableId(name)}` : "", url: "" };
 }
 
 function cleanSellerName(value) {
@@ -514,9 +417,7 @@ export function extractDescription(bodyText, metaDescription, title) {
   const descriptionIndex = lines.findIndex((line) => /^description$/i.test(line));
   if (descriptionIndex >= 0) {
     const sectionLines = lines.slice(descriptionIndex + 1);
-    const stopIndex = sectionLines.findIndex((line) =>
-      /^(meet-up|delivery|payment|seller information|report listing|similar listings|deal method|posted in|description)$/i.test(line)
-    );
+    const stopIndex = sectionLines.findIndex((line) => /^(meet-up|delivery|payment|seller information|report listing|similar listings|deal method|posted in|description)$/i.test(line));
     const description = cleanDescriptionText((stopIndex >= 0 ? sectionLines.slice(0, stopIndex) : sectionLines).join("\n"), title);
     if (description) return description;
   }
@@ -561,42 +462,41 @@ export function extractLocation(bodyText = "", jsonText = "", description = "", 
     }
   }
 
-  return extractLocationFromText(`${description}\n${bodyText}`);
+  return extractLocationFromFreeText(description || bodyText);
 }
 
 function extractLocationAfterHeading(lines, headingIndex) {
-  const sectionLines = lines.slice(headingIndex + 1);
-  const stopIndex = sectionLines.findIndex((line) =>
-    /^(delivery|payment|faq|description|seller information|meet the seller|report listing|similar listings|deal method|returns and refunds|buyer protection|safety policy|make offer|chat)$/i.test(line)
-  );
-  return cleanLocation((stopIndex >= 0 ? sectionLines.slice(0, stopIndex) : sectionLines).join(" "));
+  const stop = /^(delivery|payment|seller information|buyer protection|description|deal method|report listing|similar listings)$/i;
+  const locationLines = [];
+  for (const line of lines.slice(headingIndex + 1)) {
+    if (stop.test(line)) break;
+    if (/^(meet[-\s]?up|pickup|pick up|self collection)$/i.test(line)) continue;
+    const cleaned = cleanLocation(line);
+    if (cleaned) locationLines.push(cleaned);
+    if (locationLines.length >= 2) break;
+  }
+  return cleanLocation(locationLines.join(" "));
 }
 
-function extractLocationFromLinks(locationLinks) {
-  for (const link of locationLinks || []) {
-    const textLocation = cleanLocation(link.text);
-    if (textLocation) return textLocation;
-    const hrefLocation = decodeURIComponent(String(link.href || "")).match(/\/maps\/place\/([^/?]+)/i)?.[1]?.replace(/\+/g, " ");
-    const location = cleanLocation(hrefLocation || "");
+function extractLocationFromLinks(locationLinks = []) {
+  for (const link of locationLinks) {
+    if (!/maps|google/i.test(link.href || "")) continue;
+    const location = cleanLocation(link.text);
     if (location) return location;
   }
   return "";
 }
 
-function extractLocationFromJson(jsonText) {
+function extractLocationFromJson(jsonText = "") {
   const text = String(jsonText || "");
-  const matches = [
-    text.match(/"addressLocality"\s*:\s*"([^"]+)"/i),
-    text.match(/"addressRegion"\s*:\s*"([^"]+)"/i),
-    text.match(/"location"\s*:\s*"([^"]+)"/i)
-  ];
-  return cleanLocation(matches.find(Boolean)?.[1] || "");
+  const match = text.match(/"(?:address|location|name)"\s*:\s*"([^"]{3,90})"/i);
+  return cleanLocation(match?.[1] || "");
 }
 
-function extractLocationFromText(text) {
-  const source = String(text || "");
+function extractLocationFromFreeText(value = "") {
+  const source = String(value || "");
   const patterns = [
-    /\b(?:self\s+collect|collect|collection|pickup|pick\s+up)\s+(?:at|near|around|from|in)?\s*([^.\n;]{3,90})/i,
+    /\b(?:self collect|collection|pickup|pick up)\s*(?:at|near|around|from|in)?\s*([^.\n;]{3,90})/i,
     /\b(?:meetup|meet-up|meet up)\s+(?:at|near|around|from|in)?\s*([^.\n;]{3,90})/i,
     /\b(?:deal|dealing)\s+(?:at|near|around|from|in)\s+([^.\n;]{3,90})/i
   ];
@@ -608,33 +508,13 @@ function extractLocationFromText(text) {
   return "";
 }
 
-function cleanLocation(value) {
-  const text = String(value || "")
-    .replace(/\b(?:can deliver|delivery|deliver to|can negotiate|negotiable|chat|dm|pm|read more)\b.*$/i, "")
-    .replace(/\s+/g, " ")
-    .replace(/^[\s:,-]+|[\s:,-]+$/g, "")
-    .trim();
-  if (!text || text.length < 3 || text.length > 90) return "";
-  if (/^(singapore|carousell sg|meet-up|delivery|payment|read more)$/i.test(text)) return "";
-  if (/^(my place|my convenience|my preferred station)$/i.test(text)) return "";
-  return text;
-}
-
 async function readDetailPage(page) {
   return page.evaluate(() => {
     const bodyText = document.body.innerText || "";
     const metaDescription = document.querySelector('meta[name="description"]')?.content || "";
-    const jsonLd = [...document.querySelectorAll('script[type="application/ld+json"]')]
-      .map((script) => script.textContent || "")
-      .join("\n");
-    const profileLinks = [...document.querySelectorAll('a[href^="/u/"], a[href*="/u/"]')].map((anchor) => ({
-      text: anchor.textContent?.trim() || "",
-      href: anchor.href || ""
-    }));
-    const locationLinks = [...document.querySelectorAll('a[href*="google.com/maps"], a[href*="maps.google"], a[href*="/maps/place/"]')].map((anchor) => ({
-      text: anchor.textContent?.trim() || "",
-      href: anchor.href || ""
-    }));
+    const jsonLd = [...document.querySelectorAll('script[type="application/ld+json"]')].map((script) => script.textContent || "").join("\n");
+    const profileLinks = [...document.querySelectorAll('a[href^="/u/"], a[href*="/u/"]')].map((anchor) => ({ text: anchor.textContent?.trim() || "", href: anchor.href || "" }));
+    const locationLinks = [...document.querySelectorAll('a[href*="google.com/maps"], a[href*="maps.google"], a[href*="/maps/place/"]')].map((anchor) => ({ text: anchor.textContent?.trim() || "", href: anchor.href || "" }));
     const imageUrls = collectPageImageUrls();
     return { bodyText, metaDescription, jsonLd, profileLinks, locationLinks, imageUrls };
 
@@ -643,7 +523,7 @@ async function readDetailPage(page) {
       const add = (value) => {
         if (!value) return;
         for (const candidate of String(value).split(",")) {
-          const url = candidate.trim().split(/\s+/)[0].replace(/^['"]|['"]$/g, "");
+          const url = candidate.trim().split(/\s+/)[0].replace(/^["']|["']$/g, "");
           if (url && !urls.includes(url)) urls.push(url);
         }
       };
@@ -657,27 +537,10 @@ async function readDetailPage(page) {
       });
       document.querySelectorAll("meta[property='og:image'], meta[name='twitter:image']").forEach((meta) => add(meta.getAttribute("content")));
       document.querySelectorAll("[style*='background']").forEach((element) => {
-        const match = String(element.getAttribute("style") || "").match(/url\((['"]?)(.*?)\1\)/i);
+        const match = String(element.getAttribute("style") || "").match(/url\((["']?)(.*?)\1\)/i);
         add(match?.[2]);
       });
-      try {
-        const json = JSON.parse((document.querySelector("#__NEXT_DATA__")?.textContent || "{}").trim());
-        visit(json);
-      } catch {}
       return urls;
-
-      function visit(value) {
-        if (!value || urls.length >= 12) return;
-        if (typeof value === "string") {
-          add(value);
-          return;
-        }
-        if (Array.isArray(value)) {
-          value.forEach(visit);
-          return;
-        }
-        if (typeof value === "object") Object.values(value).forEach(visit);
-      }
     }
   });
 }
@@ -693,29 +556,19 @@ async function expandDetailSections(page) {
   }
 }
 
-async function newBrowserPage(options = {}) {
+async function newBrowserPage() {
   let chromium;
   try {
     ({ chromium } = await import("playwright"));
   } catch {
-    throw new Error("playwright is not installed. Run npm.cmd install.");
-  }
-
-  const executablePath = options.executablePath || (await findChromePath());
-  if (!executablePath) {
-    throw new Error("Chrome or Chromium was not found. Install Google Chrome in the Linux environment or set CHROME_PATH to your Chrome executable.");
+    throw new Error("playwright is not installed. Run npm install.");
   }
 
   const browser = await chromium.launch({
-    executablePath,
     headless: true,
     args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
   });
-  const page = await browser.newPage({
-    locale: "en-SG",
-    timezoneId: "Asia/Singapore",
-    userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"
-  });
+  const page = await browser.newPage({ locale: "en-SG", timezoneId: "Asia/Singapore", userAgent: USER_AGENT });
   return { browser, page };
 }
 
@@ -735,6 +588,44 @@ export function extractRealPriceFromDescription(description) {
     if (price > 1 && price < 100000) return price;
   }
   return 0;
+}
+
+function extractImageUrlsFromHtml(html) {
+  const source = String(html || "");
+  const urls = [];
+  const attrPattern = /(?:src|data-src|data-original|data-lazy-src|srcset)=["']([^"']+)["']/gi;
+  let match;
+  while ((match = attrPattern.exec(source))) {
+    const value = decodeHtml(match[1]);
+    for (const candidate of value.split(",")) {
+      const url = candidate.trim().split(/\s+/)[0];
+      if (url) urls.push(url);
+    }
+  }
+  return urls;
+}
+
+function mergeImageUrls(...sources) {
+  const urls = [];
+  for (const source of sources) {
+    if (!Array.isArray(source)) continue;
+    for (const raw of source) {
+      const url = normalizeImageUrl(raw);
+      if (!url || urls.includes(url)) continue;
+      if (EXCLUDED_IMAGE_PATTERN.test(url)) continue;
+      urls.push(url);
+    }
+  }
+  return urls.slice(0, 6);
+}
+
+function normalizeImageUrl(value) {
+  const url = String(value || "").trim();
+  if (!url) return "";
+  if (url.startsWith("//")) return `https:${url}`;
+  if (url.startsWith("/")) return `${CAROUSELL_BASE_URL}${url}`;
+  if (/^https?:\/\//i.test(url)) return url;
+  return "";
 }
 
 function isPlaceholderPrice(price) {
@@ -758,8 +649,16 @@ function cleanDescriptionText(value, title) {
     .trim();
 }
 
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function cleanLocation(value) {
+  const text = String(value || "")
+    .replace(/\b(?:can deliver|delivery|deliver to|can negotiate|negotiable|chat|dm|pm|read more)\b.*$/i, "")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s:,-]+|[\s:,-]+$/g, "")
+    .trim();
+  if (!text || text.length < 3 || text.length > 90) return "";
+  if (/^(singapore|carousell sg|meet-up|delivery|payment|read more)$/i.test(text)) return "";
+  if (/^(my place|my convenience|my preferred station)$/i.test(text)) return "";
+  return text;
 }
 
 function cleanTitle(value, cardText = "") {
@@ -774,6 +673,15 @@ function cleanTitle(value, cardText = "") {
     .filter((line) => !/^(like new|new|used|well used|brand new)$/i.test(line))
     .filter((line) => !/^\d+ (sec|min|hour|day|week|month)s? ago$/i.test(line));
   return (lines[0] || value).replace(/\s+/g, " ").trim();
+}
+
+function inferCategory(value) {
+  const text = String(value || "").toLowerCase();
+  if (/gpu|rtx|gtx|radeon|graphics/.test(text)) return "graphics card";
+  if (/cpu|ryzen|intel|processor/.test(text)) return "processor";
+  if (/case|chassis|o11|fractal|lian li/.test(text)) return "pc case";
+  if (/keyboard|mouse|monitor|ssd|ram|motherboard|mobo|psu|cooler/.test(text)) return "computers & tech";
+  return "general";
 }
 
 function looksLikeListing(value, url, priceValue) {
@@ -793,25 +701,14 @@ function collectImageUrls(value) {
 }
 
 function extractStructuredLocation(value) {
-  const candidates = [
-    value.location,
-    value.locationName,
-    value.location_name,
-    value.meetupLocation,
-    value.meetup_location,
-    value.areaName,
-    value.area_name,
-    value.address
-  ];
+  const candidates = [value.location, value.locationName, value.location_name, value.meetupLocation, value.meetup_location, value.areaName, value.area_name, value.address];
   for (const candidate of candidates) {
     if (typeof candidate === "string") {
       const location = cleanLocation(candidate);
       if (location) return location;
     }
     if (candidate && typeof candidate === "object") {
-      const location = cleanLocation(
-        firstString(candidate.name, candidate.address, candidate.formattedAddress, candidate.formatted_address, candidate.locationName, candidate.areaName)
-      );
+      const location = cleanLocation(firstString(candidate.name, candidate.address, candidate.formattedAddress, candidate.formatted_address, candidate.locationName, candidate.areaName));
       if (location) return location;
     }
   }
@@ -835,8 +732,22 @@ function firstString(...values) {
   return values.find((value) => typeof value === "string" && value.trim())?.trim();
 }
 
+function stableId(value) {
+  let hash = 0;
+  for (const char of String(value || "")) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash.toString(36);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function stripTags(value) {
-  return decodeHtml(value.replace(/<[^>]*>/g, " "));
+  return decodeHtml(String(value || "").replace(/<[^>]*>/g, " "));
 }
 
 function decodeHtml(value) {
@@ -847,33 +758,4 @@ function decodeHtml(value) {
     .replaceAll("&#39;", "'")
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">");
-}
-
-function stableId(value) {
-  let hash = 0;
-  for (const char of String(value)) {
-    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
-  }
-  return hash.toString(36);
-}
-
-function inferCategory(query) {
-  const text = query.toLowerCase();
-  if (/camera|sony|canon|nikon|fuji|lens/.test(text)) return "camera";
-  if (/switch|playstation|xbox|game|ps5/.test(text)) return "gaming";
-  if (/airpod|speaker|headphone|audio/.test(text)) return "audio";
-  return "electronics";
-}
-
-async function findChromePath() {
-  const { access } = await import("node:fs/promises");
-  for (const candidate of CHROME_PATHS) {
-    try {
-      await access(candidate);
-      return candidate;
-    } catch {
-      // Try the next known browser path.
-    }
-  }
-  return "";
 }
