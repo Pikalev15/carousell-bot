@@ -65,3 +65,29 @@ test("old listings outside the lookback window are not grouped", () => {
   assert.equal(items[0].duplicate_count, 1);
   assert.equal(items[1].duplicate_count, 1);
 });
+
+test("manual split override separates automatic duplicate group", () => {
+  const path = "https://media.karousell.com/media/photos/products/shared-photo.jpg";
+  const automatic = applyScopedDuplicateInfo([
+    listing({ id: 1, image_urls: [path] }),
+    listing({ id: 2, image_urls: [`${path}?width=960`] })
+  ]);
+  const split = applyScopedDuplicateInfo([
+    listing({ id: 1, image_urls: [path] }),
+    listing({ id: 2, image_urls: [`${path}?width=960`] })
+  ], { overrides: [{ listing_id_a: 1, listing_id_b: 2, action: "split" }] });
+
+  assert.equal(automatic[0].duplicate_count, 2);
+  assert.equal(split[0].duplicate_count, 1);
+  assert.equal(split[1].duplicate_count, 1);
+});
+
+test("manual merge override joins otherwise separate listings", () => {
+  const merged = applyScopedDuplicateInfo([
+    listing({ id: 1, seller_id: "seller-a", title: "RTX 3070 Ventus", image_urls: ["https://media.karousell.com/a.jpg"] }),
+    listing({ id: 2, seller_id: "seller-b", title: "3070 GPU", image_urls: ["https://media.karousell.com/b.jpg"] })
+  ], { overrides: [{ listing_id_a: 1, listing_id_b: 2, action: "merge" }] });
+
+  assert.equal(merged[0].duplicate_group_id, merged[1].duplicate_group_id);
+  assert.equal(merged[0].duplicate_count, 2);
+});
