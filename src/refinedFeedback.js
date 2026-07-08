@@ -5,9 +5,9 @@ import { readJson, writeJson } from "./store.js";
 export { REFINED_RATINGS };
 
 export async function saveRefinedListingLabel(listingId, rating, body = {}) {
-  const normalized = normalizeRefinedRating(rating);
-  if (!Number(listingId) || !normalized || normalized === "unmarked") {
-    if (normalized === "unmarked") return removeListingLabel(Number(listingId));
+  const refinedRating = normalizeRefinedRating(rating);
+  if (!Number(listingId) || !refinedRating || refinedRating === "unmarked") {
+    if (refinedRating === "unmarked") return removeListingLabel(Number(listingId));
     throw new Error("listing_id and valid refined rating are required");
   }
 
@@ -18,8 +18,8 @@ export async function saveRefinedListingLabel(listingId, rating, body = {}) {
   const relevance = analyzeListingRelevance(listing, body.query || body.search_query || "");
   const nextLabel = {
     listing_id: Number(listingId),
-    user_rating: normalized,
-    legacy_rating: body.rating || rating,
+    user_rating: legacyRatingFor(refinedRating),
+    refined_rating: refinedRating,
     asked_price: body.asked_price === undefined || body.asked_price === "" ? Number(listing.current_price || 0) : Number(body.asked_price || 0),
     negotiated_price: body.negotiated_price === undefined || body.negotiated_price === "" ? null : Number(body.negotiated_price || 0),
     target_category: String(body.target_category || relevance.category || listing.category || "").trim(),
@@ -45,12 +45,22 @@ export async function retrainRefinedModel() {
   return model;
 }
 
+function legacyRatingFor(refinedRating) {
+  if (["great_deal", "good_deal", "fair_deal"].includes(refinedRating)) return "good";
+  if (refinedRating === "bought") return "bought";
+  if (refinedRating === "not_spam") return "not_spam";
+  if (["bad_deal", "overpriced"].includes(refinedRating)) return "bad_deal";
+  if (refinedRating === "spam") return "spam";
+  if (refinedRating === "bad_pricer") return "bad_pricer";
+  return "skip";
+}
+
 async function removeListingLabel(listingId) {
   const labels = await readJson("labels");
   const next = labels.filter((label) => Number(label.listing_id) !== Number(listingId));
   await writeJson("labels", next);
   const model = await retrainRefinedModel();
-  return { listing_id: Number(listingId), user_rating: "unmarked", removed: labels.length - next.length, model_summary: summarizeModel(model) };
+  return { listing_id: Number(listingId), user_rating: "unmarked", refined_rating: "unmarked", removed: labels.length - next.length, model_summary: summarizeModel(model) };
 }
 
 function summarizeModel(model = {}) {
