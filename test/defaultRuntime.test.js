@@ -22,6 +22,20 @@ test("plus server entrypoint has valid syntax", () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+test("batch feature helper has valid syntax", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/batchFeatures.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("category median auto tune helper has valid syntax", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/categoryMedianAutoTune.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
 test("refined feedback UI script has valid syntax", () => {
   const result = spawnSync(process.execPath, ["--check", "public/refined-feedback.js"], {
     encoding: "utf8"
