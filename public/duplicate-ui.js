@@ -51,15 +51,15 @@ function renderListings() {
 }
 
 function renderSearch() {
-  const raw = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
+  const raw = sortListings(applyPriceFilters(state?.searchResults || [], "search"), document.getElementById("search-sort").value);
   const rendered = collapseDuplicateGroups(raw);
   document.getElementById("search-results").innerHTML = rendered.length
     ? rendered.map(card).join("")
     : `<p class="empty-state">No visible listings in this price range. Try raising the max, lowering the min, or searching a more specific phrase.</p>`;
-  if (state.lastQuery) {
+  if (state?.lastQuery) {
     document.getElementById("search-summary").textContent = searchSummaryText(raw.length, rendered.length, state.lastQuery);
   }
-  document.getElementById("search-history").innerHTML = state.searches.length
+  document.getElementById("search-history").innerHTML = state?.searches?.length
     ? state.searches
         .slice(0, 8)
         .map(
