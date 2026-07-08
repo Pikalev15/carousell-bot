@@ -21,8 +21,10 @@ export function buildScopedDuplicateGroups(listings = [], options = {}) {
     for (let j = i + 1; j < candidates.length; j += 1) {
       const a = candidates[i];
       const b = candidates[j];
-      if (!areDuplicateCandidates(a, b, lookbackMs)) continue;
-      if (!hasDuplicateEvidence(a, b)) continue;
+      if (!sameCarousellId(a, b)) {
+        if (!areDuplicateCandidates(a, b, lookbackMs)) continue;
+        if (!hasDuplicateEvidence(a, b)) continue;
+      }
       adjacency.get(Number(a.id))?.add(Number(b.id));
       adjacency.get(Number(b.id))?.add(Number(a.id));
     }
@@ -90,7 +92,6 @@ function areDuplicateCandidates(a, b, lookbackMs) {
 }
 
 function hasDuplicateEvidence(a, b) {
-  if (sameCarousellId(a, b)) return true;
   const overlap = titleTokenOverlap(a, b);
   if (sameSeller(a, b) && overlap >= MIN_TITLE_TOKEN_OVERLAP) return true;
   if (imageIdentityOverlap(a, b) && (sameSeller(a, b) || overlap >= MIN_TITLE_TOKEN_OVERLAP)) return true;
