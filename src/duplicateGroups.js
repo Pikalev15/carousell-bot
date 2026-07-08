@@ -14,7 +14,9 @@ export function applyScopedDuplicateInfo(listings = [], options = {}) {
 
 export function buildScopedDuplicateGroups(listings = [], options = {}) {
   const lookbackMs = Math.max(1, Number(options.lookbackMs || DUPLICATE_GROUP_LOOKBACK_MS));
+  const overrides = normalizeOverrides(options.overrides || []);
   const candidates = Array.isArray(listings) ? listings : [];
+  const ids = new Set(candidates.map((listing) => Number(listing.id)));
   const adjacency = new Map(candidates.map((listing) => [Number(listing.id), new Set()]));
 
   for (let i = 0; i < candidates.length; i += 1) {
@@ -25,9 +27,15 @@ export function buildScopedDuplicateGroups(listings = [], options = {}) {
         if (!areDuplicateCandidates(a, b, lookbackMs)) continue;
         if (!hasDuplicateEvidence(a, b)) continue;
       }
-      adjacency.get(Number(a.id))?.add(Number(b.id));
-      adjacency.get(Number(b.id))?.add(Number(a.id));
+      addEdge(adjacency, Number(a.id), Number(b.id));
     }
+  }
+
+  for (const override of overrides.filter((item) => item.action === "split")) {
+    removeEdge(adjacency, override.a, override.b);
+  }
+  for (const override of overrides.filter((item) => item.action === "merge")) {
+    if (ids.has(override.a) && ids.has(override.b)) addEdge(adjacency, override.a, override.b);
   }
 
   const byId = new Map(candidates.map((listing) => [Number(listing.id), listing]));
@@ -83,6 +91,27 @@ export function duplicateGroupHistogram(listings = []) {
     else histogram[size] = (histogram[size] || 0) + 1;
   }
   return histogram;
+}
+
+export function normalizeOverrides(overrides = []) {
+  return (Array.isArray(overrides) ? overrides : [])
+    .map((item) => ({
+      a: Number(item.listing_id_a ?? item.a ?? item.listingA),
+      b: Number(item.listing_id_b ?? item.b ?? item.listingB),
+      action: String(item.action || "").toLowerCase() === "merge" ? "merge" : String(item.action || "").toLowerCase() === "split" ? "split" : ""
+    }))
+    .filter((item) => item.a && item.b && item.a !== item.b && item.action);
+}
+
+function addEdge(adjacency, a, b) {
+  if (!adjacency.has(a) || !adjacency.has(b)) return;
+  adjacency.get(a).add(b);
+  adjacency.get(b).add(a);
+}
+
+function removeEdge(adjacency, a, b) {
+  adjacency.get(a)?.delete(b);
+  adjacency.get(b)?.delete(a);
 }
 
 function areDuplicateCandidates(a, b, lookbackMs) {
