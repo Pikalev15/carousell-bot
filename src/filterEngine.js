@@ -20,6 +20,8 @@ const conditionScore = {
 
 const PLACEHOLDER_PRICES = new Set([0, 1, 8, 88, 888, 8888, 9999, 12345, 99999]);
 const ACCESSORY_PATTERN = /\b(?:panel|front panel|side panel|glass panel|riser|vertical gpu kit|bracket|mount|cable|adapter|screws?|stand|tray|cover|dust filter|mesh kit|extension|sleeved cable|wood panel|tempered glass only|panel only|upgrade kit)\b/i;
+const ACCESSORY_ONLY_PATTERN = /\b(?:panel|front panel|side panel|glass panel|wood panel|riser|vertical gpu kit|bracket|mount|cable|adapter|screws?|stand|tray|cover|dust filter|mesh kit|extension|sleeved cable|tempered glass|upgrade kit)\b.{0,80}\bonly\b|\bonly\b.{0,80}\b(?:panel|riser|bracket|mount|cable|adapter|cover|tray|kit)\b|\bnot\s+(?:the\s+)?full\s+(?:case|pc|build|set)\b/i;
+const FULL_PRODUCT_PATTERN = /\b(?:full case|complete case|whole case|case included|full build|complete build|working pc|whole set)\b/i;
 const BUNDLE_PATTERN = /\b(?:bundle|full build|whole set|all for|combo|assorted|mixed parts|parts lot|pc parts)\b/i;
 const CORE_PART_PATTERN = /\b(?:gpu|graphics card|rtx|gtx|radeon|rx\s?\d{3,4}|cpu|processor|ryzen|core i[3579]|motherboard|mobo|ram|ddr[345]|ssd|nvme|psu|power supply|case|chassis|cooler|aio|fan)\b/i;
 const PROFILE_IMAGE_PATTERN = /\b(?:profiles?|avatar|user[-_]?icon|profile[-_]?pic|profile[-_]?photo|seller|pfp)\b/i;
@@ -230,7 +232,10 @@ function scoreRiskFlags(listing, context = {}) {
 
 function isAccessoryListing(listing) {
   const text = `${listing.title || ""} ${listing.description || ""}`;
-  return ACCESSORY_PATTERN.test(text) && !/\b(?:case|chassis|aio|cooler|ram|ssd|motherboard|gpu|cpu)\b/i.test(text.replace(ACCESSORY_PATTERN, ""));
+  if (!ACCESSORY_PATTERN.test(text)) return false;
+  if (ACCESSORY_ONLY_PATTERN.test(text)) return true;
+  if (FULL_PRODUCT_PATTERN.test(text)) return false;
+  return /\b(?:riser|vertical gpu kit|bracket|mount|cable|adapter|screws?|dust filter|mesh kit|extension|sleeved cable|upgrade kit|front panel|side panel|glass panel|wood panel|tempered glass)\b/i.test(text);
 }
 
 function isBundleListing(listing) {
