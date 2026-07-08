@@ -14,6 +14,7 @@
     "enrich:data": "node scripts/enrich-listing-data.js",
     "medians:default": "node scripts/apply-default-medians.js",
     "export:data": "node scripts/export-data.js",
+    "debug:duplicates": "node scripts/debug-duplicate-groups.js",
     "test": "node --test",
     "postinstall": "playwright install chromium"
   },

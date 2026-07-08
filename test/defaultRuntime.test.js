@@ -29,6 +29,13 @@ test("refined feedback UI script has valid syntax", () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+test("duplicate collapse UI script has valid syntax", () => {
+  const result = spawnSync(process.execPath, ["--check", "public/duplicate-ui.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
 test("plus runtime replays JSON request bodies as buffers", () => {
   assert.match(serverPlusSource, /Readable\.from\(\[Buffer\.from\(JSON\.stringify\(body \|\| \{\}\)\)\]\)/);
   assert.match(serverPlusSource, /chunks\.push\(typeof chunk === "string" \? Buffer\.from\(chunk\) : chunk\)/);
