@@ -39,7 +39,7 @@ function collapseDuplicateGroups(listings) {
 
 function renderListings() {
   const filter = document.getElementById("listing-filter").value;
-  const raw = applyPriceFilters(state.listings, "listing").filter((listing) => {
+  const raw = applyPriceFilters(state?.listings || [], "listing").filter((listing) => {
     if (filter === "clean") return !listing.classification.is_filtered;
     if (filter === "filtered") return listing.classification.is_filtered;
     return true;
