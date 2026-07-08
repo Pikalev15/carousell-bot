@@ -1,6 +1,7 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
+import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
 import { buildListings, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
 import { scoreDeal } from "./filterEngine.js";

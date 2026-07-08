@@ -163,6 +163,7 @@ async function runSearch(mode) {
     await load();
     showView("search");
     document.getElementById("search-input").value = query;
+    renderSearch();
     const raw = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
     const rendered = collapseDuplicateGroups(raw);
     const source = payload.source === "carousell-web" ? "Carousell web" : payload.source;

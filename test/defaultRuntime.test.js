@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const serverPlusSource = await readFile(new URL("../src/server-plus.js", import.meta.url), "utf8");
 const refinedFeedbackSource = await readFile(new URL("../public/refined-feedback.js", import.meta.url), "utf8");
+const duplicateUiSource = await readFile(new URL("../public/duplicate-ui.js", import.meta.url), "utf8");
+const indexHtml = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
 const notificationCss = await readFile(new URL("../public/notification-detail.css", import.meta.url), "utf8");
 
 test("default npm runtime uses plus server", () => {
@@ -61,4 +63,9 @@ test("UI guards placeholder prices and enables alert scrolling", () => {
   assert.match(refinedFeedbackSource, /price_source === "description"/);
   assert.match(notificationCss, /\.alerts-list[\s\S]*overflow-y:\s*auto/);
   assert.match(notificationCss, /\.alerts-panel[\s\S]*overflow:\s*hidden/);
+});
+
+test("search results render after reload with duplicate UI active", () => {
+  assert.match(indexHtml, /<script src="\/duplicate-ui\.js"><\/script>/);
+  assert.match(duplicateUiSource, /await load\(\);\s*showView\("search"\);\s*document\.getElementById\("search-input"\)\.value = query;\s*renderSearch\(\);/);
 });
