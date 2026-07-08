@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "dev": "node src/server.js",
     "migrate": "node scripts/migrate-json-to-sqlite.js",
+    "clean:images": "node scripts/clean-listing-images.js",
     "test": "node --test",
     "postinstall": "playwright install chromium"
   },
