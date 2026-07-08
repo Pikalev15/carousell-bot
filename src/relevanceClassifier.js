@@ -29,7 +29,7 @@ const BROKEN_PATTERN = /\b(?:faulty|spoilt|not working|for parts|no hard\s?drive
 const FULL_PC_PATTERN = /\b(?:full build|custom pc|gaming pc|desktop pc|prebuilt|pre-built|workstation|plug and play|windows 11 ready)\b/i;
 
 const CATEGORY_RULES = [
-  ["pc case accessory", /\b(?:front panel|side panel|glass panel|wood panel|panel only|vertical gpu kit|riser|bracket|mount|dust filter|mesh kit)\b/i],
+  ["pc case accessory", /\b(?:panel only|vertical gpu kit|riser|bracket|mount|dust filter|mesh kit)\b|\b(?:front panel|side panel|glass panel|wood panel)\b.{0,60}\bonly\b|\bonly\b.{0,60}\b(?:front panel|side panel|glass panel|wood panel)\b/i],
   ["pc case", /\b(?:dan\s?a3|a3-?matx|a4-?h2o|o11|nr200|terra|jonsbo|d31|d32|d33|d41|fractal|phanteks|xt\s?m3|lian li|case|chassis|casing|m-?atx case|matx case|itx case|sff case)\b/i],
   ["graphics card", /\b(?:rtx|gtx|radeon|rx\s?\d{3,4}|graphics card|gpu\b|geforce|arc\s?[ab]\d{3})\b/i],
   ["processor", /\b(?:ryzen|intel core|core i[3579]|processor|cpu\b|9800x3d|7800x3d|5600x|12400f|14600k)\b/i],
