@@ -4,6 +4,7 @@ import { buildListings, handleTelegramCommand, server } from "./server.js";
 import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
 import { flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
+import { saveRefinedListingLabel } from "./refinedFeedback.js";
 import { searchAndStoreStartUrls } from "./startUrlSearch.js";
 
 const port = Number(process.env.PORT || 3000);
@@ -57,6 +58,16 @@ server.on("request", async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/start-urls/parse") {
       sendJson(response, 200, parseStartUrls(url.searchParams.getAll("url").length ? url.searchParams.getAll("url") : url.searchParams.get("urls")));
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/feedback/label") {
+      const body = await readRequestBody(request);
+      try {
+        sendJson(response, 200, await saveRefinedListingLabel(Number(body.listing_id), body.rating, body));
+      } catch (error) {
+        sendJson(response, 400, { error: error.message });
+      }
       return;
     }
 
