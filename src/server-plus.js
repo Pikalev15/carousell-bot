@@ -13,6 +13,7 @@ import {
   createExportBundle,
   getDuplicateOverrides,
   getMergedPriceHistory,
+  getScopedListings,
   getSellerReputationHistory,
   importBundle,
   setListingSnooze,
