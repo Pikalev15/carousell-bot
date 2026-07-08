@@ -20,8 +20,8 @@ function listing(overrides) {
 test("different image paths with identical query strings are not grouped", () => {
   const query = "?impolicy=resize&width=640&height=640&quality=80";
   const items = applyScopedDuplicateInfo([
-    listing({ id: 1, image_urls: [`https://media.karousell.com/media/photos/products/photo-a.jpg${query}`] }),
-    listing({ id: 2, image_urls: [`https://media.karousell.com/media/photos/products/photo-b.jpg${query}`] })
+    listing({ id: 1, seller_id: "seller-a", image_urls: [`https://media.karousell.com/media/photos/products/photo-a.jpg${query}`] }),
+    listing({ id: 2, seller_id: "seller-b", image_urls: [`https://media.karousell.com/media/photos/products/photo-b.jpg${query}`] })
   ]);
 
   assert.notEqual(duplicateImageIdentity(items[0].image_urls[0]), duplicateImageIdentity(items[1].image_urls[0]));
