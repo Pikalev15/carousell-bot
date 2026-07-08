@@ -38,15 +38,15 @@ export function addDuplicateOverride(listingIdA, listingIdB, action) {
   return next;
 }
 
-export async function getMergedPriceHistory(listingId, { merged = true } = {}) {
+export async function getMergedPriceHistory(listingId, { merged = true, listings } = {}) {
   const id = Number(listingId);
   if (!id) return [];
   if (!merged) return decorateHistory(getPriceHistory(id));
 
-  const listings = await getScopedListings();
-  const listing = listings.find((item) => Number(item.id) === id);
+  const allListings = listings || await getScopedListings();
+  const listing = allListings.find((item) => Number(item.id) === id);
   if (!listing) return decorateHistory(getPriceHistory(id));
-  const ids = listings
+  const ids = allListings
     .filter((item) => item.duplicate_group_id === listing.duplicate_group_id)
     .map((item) => Number(item.id));
   const sourceIds = ids.length ? ids : [id];
