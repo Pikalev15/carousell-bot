@@ -12,6 +12,7 @@ const REFINED_FEEDBACK_OPTIONS = [
   ["wtb_service", "WTB/service"]
 ];
 
+const ISSUE_FEEDBACK = new Set(["duplicate_listing", "bundle_mixed", "accessory_only", "wrong_category", "irrelevant", "wtb_service"]);
 const feedbackObserver = new MutationObserver(injectRefinedFeedbackControls);
 feedbackObserver.observe(document.body, { childList: true, subtree: true });
 document.addEventListener("DOMContentLoaded", injectRefinedFeedbackControls);
@@ -25,6 +26,7 @@ document.addEventListener("click", async (event) => {
   const listingId = Number(button.dataset.listingId || card?.querySelector("button[data-listing-id]")?.dataset.listingId || 0);
   if (!listingId) return;
   const price = Number(card?.querySelector("button[data-listing-id]")?.dataset.price || 0);
+  const rating = button.dataset.refinedLabel;
   button.disabled = true;
   button.dataset.idleText = button.dataset.idleText || button.textContent;
   button.textContent = "Saving...";
@@ -34,9 +36,9 @@ document.addEventListener("click", async (event) => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         listing_id: listingId,
-        rating: button.dataset.refinedLabel,
+        rating,
         asked_price: price,
-        relevance_flags: button.dataset.refinedLabel
+        relevance_flags: ISSUE_FEEDBACK.has(rating) ? rating : ""
       })
     });
     const payload = await response.json().catch(() => ({}));
