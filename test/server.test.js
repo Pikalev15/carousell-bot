@@ -11,7 +11,7 @@ test("serves core and roadmap API endpoints", async () => {
   await assert.doesNotReject(() => import("../src/store.js"));
   const { server, handleTelegramCommand } = await import(`../src/server.js?db=${cacheKey}`);
   const { closeDatabase } = await import("../src/store.js");
-  const { notifyAlert } = await import("../src/notifier.js");
+  const { notifyAlert, formatAlertMessage } = await import("../src/notifier.js");
   await new Promise((resolve) => server.listen(0, resolve));
   const { port } = server.address();
   const base = `http://localhost:${port}`;
@@ -45,6 +45,14 @@ test("serves core and roadmap API endpoints", async () => {
     const telegram = await post(`${base}/api/config/telegram`, { enabled: false, botToken: "12345:testtoken", chatId: "42" });
     const telegramTest = await post(`${base}/api/telegram/test`, {});
     const fakeDealNotification = await notifyAlert({ type: "new_deal", title: "Fake deal", message: "Test notification path", listing_id: 0 });
+    const fakeDealWithLink = await notifyAlert({
+      type: "new_deal",
+      title: "Fake deal with link",
+      message: "Test notification path",
+      listing_id: 5,
+      listing_url: "https://www.carousell.sg/p/fake-deal-5"
+    });
+    const alertsAfterLinkedNotification = await fetch(`${base}/api/alerts`).then((response) => response.json());
     const config = await fetch(`${base}/api/config`).then((response) => response.json());
 
     assert.equal(health.ok, true);
@@ -87,6 +95,12 @@ test("serves core and roadmap API endpoints", async () => {
     assert.match(telegramTest.reason || telegramTest.error, /Telegram/i);
     assert.equal(fakeDealNotification.result.ok, false);
     assert.equal(fakeDealNotification.alert.error.includes("Telegram"), true);
+    assert.equal(fakeDealWithLink.alert.listing_url, "https://www.carousell.sg/p/fake-deal-5");
+    assert.ok(alertsAfterLinkedNotification.alerts.some((alert) => alert.listing_url === "https://www.carousell.sg/p/fake-deal-5"));
+    assert.match(
+      formatAlertMessage({ type: "new_deal", title: "Fake deal with link", message: "msg", listing_url: "https://www.carousell.sg/p/fake-deal-5" }),
+      /https:\/\/www\.carousell\.sg\/p\/fake-deal-5/
+    );
     assert.equal(config.telegram.botTokenConfigured, true);
   } finally {
     server.closeAllConnections();

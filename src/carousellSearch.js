@@ -33,7 +33,7 @@ export async function hydrateCarousellListings(listings, options = {}) {
   if (candidates.length === 0) return [];
   const { browser } = await newBrowserPage(options);
   try {
-    const concurrency = Math.max(1, Math.min(3, Number(options.concurrency || 2)));
+    const concurrency = Math.max(1, Math.min(4, Number(options.concurrency || 2)));
     const jitterMs = Math.max(0, Number(options.jitterMs || 0));
     const hydrated = new Array(candidates.length);
     let cursor = 0;
@@ -60,8 +60,8 @@ export async function refreshCarousellListingDetails(listing) {
 
   const { page, browser } = await newBrowserPage();
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForLoadState("networkidle", { timeout: 12000 }).catch(() => {});
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
     await expandDetailSections(page);
     const details = await readDetailPage(page);
     const seller = extractSellerFromDetails(details, listing.seller_name);
@@ -87,9 +87,9 @@ export async function refreshCarousellListingDetails(listing) {
 async function fetchWithBrowser(url, options = {}) {
   const { page, browser } = await newBrowserPage(options);
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 45000 });
-    await page.waitForLoadState("networkidle", { timeout: 20000 }).catch(() => {});
-    await page.waitForSelector('a[href*="/p/"], script#__NEXT_DATA__', { timeout: 20000 }).catch(() => {});
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    await page.waitForSelector('a[href*="/p/"], script#__NEXT_DATA__', { timeout: 10000 }).catch(() => {});
     let domListings = await page.evaluate((anchorLimit) => {
       const anchors = [...document.querySelectorAll('a[href*="/p/"]')];
       return anchors.slice(0, anchorLimit).map((anchor) => {
@@ -284,8 +284,8 @@ async function hydrateListingDetail(browser, listing) {
   let page;
   try {
     page = await browser.newPage({ locale: "en-SG", timezoneId: "Asia/Singapore", userAgent: USER_AGENT });
-    await page.goto(listing.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForLoadState("networkidle", { timeout: 9000 }).catch(() => {});
+    await page.goto(listing.url, { waitUntil: "domcontentloaded", timeout: 18000 });
+    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
     await expandDetailSections(page);
     const details = await readDetailPage(page);
     const seller = extractSellerFromDetails(details, parsed.sellerName);
@@ -312,8 +312,8 @@ async function hydrateStoredListingDetail(browser, listing) {
   let page;
   try {
     page = await browser.newPage({ locale: "en-SG", timezoneId: "Asia/Singapore", userAgent: USER_AGENT });
-    await page.goto(normalizeUrl(listing.carousell_url || listing.url), { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.waitForLoadState("networkidle", { timeout: 9000 }).catch(() => {});
+    await page.goto(normalizeUrl(listing.carousell_url || listing.url), { waitUntil: "domcontentloaded", timeout: 18000 });
+    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
     await expandDetailSections(page);
     const details = await readDetailPage(page);
     const seller = extractSellerFromDetails(details, listing.seller_name);

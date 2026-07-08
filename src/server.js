@@ -814,7 +814,7 @@ async function runWatchedSearch(watch) {
   const seen = new Set();
   const results = [];
   for (const term of terms) {
-    const result = await searchAndStoreWebResults(term, "web", { watch, alert: true, categoryQuery: watch.query, awaitHydration: true });
+    const result = await searchAndStoreWebResults(term, "web", { watch, alert: true, categoryQuery: watch.query });
     results.push(result);
     for (const listing of await readJson("listings")) {
       if (seen.has(listing.carousell_id)) continue;
@@ -881,7 +881,7 @@ async function hydrateCandidatesNow(candidates, context = {}) {
 
 async function runHydrationJob(job, items, context = {}) {
   job.status = "running";
-  const hydrated = await hydrateCarousellListings(items, { concurrency: 2, jitterMs: 700 });
+  const hydrated = await hydrateCarousellListings(items, { concurrency: 4, jitterMs: 500 });
   const byId = new Map(hydrated.map((listing) => [Number(listing.id), listing]));
   const listings = await readJson("listings");
   const additions = [];
