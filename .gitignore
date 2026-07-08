@@ -13,6 +13,8 @@ data/*.db
 data/*.db-*
 data/exports/
 data/image-cache/
+data/duplicate-overrides.local.json
+data/listing-snoozes.local.json
 logs/
 *.log
 .DS_Store
