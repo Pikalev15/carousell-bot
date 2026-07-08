@@ -282,10 +282,14 @@ document.addEventListener("change", async (event) => {
   if (event.target?.id !== "config-import-file") return;
   const file = event.target.files?.[0];
   if (!file) return;
-  const text = await file.text();
-  await api.post("/api/import", JSON.parse(text));
-  await load();
-  showToast("Config imported");
+  try {
+    const text = await file.text();
+    await api.post("/api/import", JSON.parse(text));
+    await load();
+    showToast("Config imported");
+  } catch (error) {
+    showToast(`Import failed: ${error.message}`, "error");
+  }
 });
 
 document.addEventListener("DOMContentLoaded", injectImportExportControls);
