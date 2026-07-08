@@ -49,7 +49,9 @@ export function computeVariantMarketInsights(listings = []) {
 
   const insights = new Map();
   for (const listing of listings) {
-    const prices = uniquePrices(variantMarketKeys(listing).flatMap((key) => buckets.get(key) || []));
+    const keys = variantMarketKeys(listing);
+    const bucket = pickBestBucket(keys, buckets);
+    const prices = bucket.prices;
     const median = medianPrice(prices);
     const price = Number(listing.current_price || 0);
     if (!median || prices.length < 3 || price <= 1) {
@@ -66,7 +68,8 @@ export function computeVariantMarketInsights(listings = []) {
       median_price: median,
       sample_size: prices.length,
       price_delta_percent: delta,
-      market_keys: variantMarketKeys(listing)
+      market_key: bucket.key,
+      market_keys: keys
     });
   }
   return insights;
@@ -80,6 +83,17 @@ export function applyDefaultCategoryMedians(config = {}) {
       ...(config.categoryMedians || {})
     }
   };
+}
+
+function pickBestBucket(keys, buckets) {
+  const specificKeys = keys.slice(0, -1);
+  for (const key of specificKeys) {
+    const prices = uniquePrices(buckets.get(key) || []);
+    if (prices.length >= 3) return { key, prices };
+  }
+  const categoryKey = keys.at(-1);
+  const prices = uniquePrices(buckets.get(categoryKey) || []);
+  return { key: categoryKey, prices: prices.length >= 3 && specificKeys.length === 0 ? prices : [] };
 }
 
 function variationMap(variations = []) {
