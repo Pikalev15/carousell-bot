@@ -6,7 +6,7 @@
   let token = sessionStorage.getItem(STORAGE_KEY) || "";
   let tokenRequiredShown = false;
 
-  const coordinator = globalThis.createDashboardTokenCoordinator({
+  const coordinator = window.createDashboardTokenCoordinator({
     getStoredToken: () => sessionStorage.getItem(STORAGE_KEY) || token || "",
     setStoredToken: (value) => {
       token = String(value || "").trim();
