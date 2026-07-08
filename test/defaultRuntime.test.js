@@ -68,4 +68,6 @@ test("UI guards placeholder prices and enables alert scrolling", () => {
 test("search results render after reload with duplicate UI active", () => {
   assert.match(indexHtml, /<script src="\/duplicate-ui\.js"><\/script>/);
   assert.match(duplicateUiSource, /await load\(\);\s*showView\("search"\);\s*document\.getElementById\("search-input"\)\.value = query;\s*renderSearch\(\);/);
+  assert.doesNotMatch(duplicateUiSource, /function\s+card\s*\(/);
+  assert.match(duplicateUiSource, /const duplicateAwareCard =/);
 });

@@ -9,7 +9,7 @@ test("serves core and roadmap API endpoints", async () => {
   process.env.CAROUSELL_DB_PATH = path.join(tempDir, "test.db");
   const cacheKey = Date.now();
   await assert.doesNotReject(() => import("../src/store.js"));
-  const { server, handleTelegramCommand, runWatchedSearch, shouldSuppressAlert } = await import(`../src/server.js?db=${cacheKey}`);
+  const { server, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert } = await import(`../src/server.js?db=${cacheKey}`);
   const { closeDatabase, createAlert } = await import("../src/store.js");
   const { notifyAlert, formatAlertMessage } = await import("../src/notifier.js");
   await new Promise((resolve) => server.listen(0, resolve));
@@ -66,6 +66,24 @@ test("serves core and roadmap API endpoints", async () => {
     });
     const alertsAfterLinkedNotification = await fetch(`${base}/api/alerts`).then((response) => response.json());
     const config = await fetch(`${base}/api/config`).then((response) => response.json());
+    const telegramGpuRanked = rankTelegramSearchResults([
+      {
+        id: 900,
+        title: "Lian Li A3-mATX Vertical GPU Kit Gen 4 PCI-E Riser",
+        description: "Riser kit only, not a graphics card",
+        category: "pc case accessory",
+        current_price: 65,
+        score: { deal_score: 80 }
+      },
+      {
+        id: 901,
+        title: "Nvidia GeForce RTX 3070 Graphics Card",
+        description: "Used RTX 3070 GPU in good working condition",
+        category: "graphics card",
+        current_price: 250,
+        score: { deal_score: 45 }
+      }
+    ], "gpu");
 
     assert.equal(health.ok, true);
     assert.equal(Array.isArray(listings), true, JSON.stringify(listings));
@@ -118,6 +136,7 @@ test("serves core and roadmap API endpoints", async () => {
       formatAlertMessage({ type: "new_deal", title: "Fake deal with link", message: "msg", listing_url: "https://www.carousell.sg/p/fake-deal-5" }),
       /https:\/\/www\.carousell\.sg\/p\/fake-deal-5/
     );
+    assert.equal(telegramGpuRanked[0].id, 901);
     assert.equal(config.telegram.botTokenConfigured, true);
   } finally {
     server.closeAllConnections();
