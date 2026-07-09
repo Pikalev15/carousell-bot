@@ -1,8 +1,10 @@
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
+import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
-import { buildListings, handleTelegramCommand, server } from "./server.js";
+import { scoreDeal } from "./filterEngine.js";
+import { buildListings, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
 import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
 import { flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
@@ -13,7 +15,6 @@ import {
   createExportBundle,
   getDuplicateOverrides,
   getMergedPriceHistory,
-  getScopedListings,
   getSellerReputationHistory,
   importBundle,
   setListingSnooze,
@@ -257,7 +258,6 @@ async function callOriginalJson(method, url, body) {
     request.method = method;
     request.url = url;
     request.headers = { host: `localhost:${port}`, "content-type": "application/json", ...dashboardAuthHeaders() };
-    const chunks = [];
 
     const response = {
       headersSent: false,
