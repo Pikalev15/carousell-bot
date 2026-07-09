@@ -149,43 +149,38 @@ server.on("request", async (request, response) => {
 
     if (request.method === "POST" && url.pathname === "/api/search") {
       const body = await readRequestBody(request);
-      if (body.startUrls || body.start_urls || body.start_url || body.url) {
-        const nextBody = searchBodyFromStartUrls(body);
-        if (!nextBody.query && !nextBody.startUrls?.length) {
-          sendJson(response, 400, { error: "query or parseable startUrls are required" });
-          return;
-        }
-        const search = await searchAndStoreStartUrls(nextBody, {
-          limit: "all",
-          anchorLimit: nextBody.mode === "more" ? 500 : 240,
-          hydrateDetails: false
-        });
-        const state = await getState();
-        const query = nextBody.query || search.parsed?.primary?.query || "";
-        sendJson(response, 200, {
-          query,
-          mode: nextBody.mode || "web",
-          source: search.source,
-          source_url: search.url,
-          start_url_mode: search.start_url_mode,
-          added: search.added,
-          updated: search.updated,
-          hydration_job: null,
-          warning: null,
-          results: scopedListings(buildListings(state, query, {
-            minPrice: nextBody.min_price ?? 1,
-            maxPrice: nextBody.max_price,
-            maxAgeHours: nextBody.max_age_hours,
-            location: nextBody.location,
-            includeFiltered: Boolean(nextBody.include_filtered ?? true)
-          }), state.config),
-          history: state.searches || []
-        });
+      const nextBody = searchBodyFromStartUrls(body);
+      const query = String(nextBody.query || body.query || "").trim();
+      if (!query && !nextBody.startUrls?.length) {
+        sendJson(response, 400, { error: "query or parseable startUrls are required" });
         return;
       }
-      const payload = await callOriginalJson("POST", request.url, body);
-      if (Array.isArray(payload?.results)) payload.results = scopedListings(payload.results, await readJson("config"));
-      sendJson(response, 200, payload);
+      const search = await searchAndStoreStartUrls({ ...nextBody, query }, {
+        limit: "all",
+        anchorLimit: nextBody.mode === "more" || body.mode === "more" ? 500 : 240,
+        hydrateDetails: false
+      });
+      const state = await getState();
+      const resultQuery = query || search.parsed?.primary?.query || "";
+      sendJson(response, 200, {
+        query: resultQuery,
+        mode: nextBody.mode || body.mode || "web",
+        source: search.source,
+        source_url: search.url,
+        start_url_mode: search.start_url_mode,
+        added: search.added,
+        updated: search.updated,
+        hydration_job: null,
+        warning: null,
+        results: scopedListings(buildListings(state, resultQuery, {
+          minPrice: nextBody.min_price ?? body.min_price ?? 1,
+          maxPrice: nextBody.max_price ?? body.max_price,
+          maxAgeHours: nextBody.max_age_hours ?? body.max_age_hours,
+          location: nextBody.location ?? body.location,
+          includeFiltered: Boolean(nextBody.include_filtered ?? body.include_filtered ?? true)
+        }), state.config),
+        history: state.searches || []
+      });
       return;
     }
 
