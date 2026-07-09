@@ -1,6 +1,6 @@
 import { hydrateCarousellListings, searchCarousell } from "./carousellSearch.js";
 import { enrichListingData, parseStartUrls } from "./listingDataQuality.js";
-import { bulkUpsertListings, readJson } from "./store.js";
+import { readJson, writeJson } from "./store.js";
 
 export async function searchAndStoreStartUrls(body = {}, options = {}) {
   const parsed = parseStartUrls(body.startUrls || body.start_urls || body.start_url || body.url || "");
@@ -41,7 +41,7 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
     }
   }
 
-  if (added || updated) bulkUpsertListings(nextListings);
+  if (added || updated) await writeJson("listings", nextListings);
 
   return {
     source: "carousell-starturls",
