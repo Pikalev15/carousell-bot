@@ -263,7 +263,7 @@ async function hydratePlusListings(jobId, listings) {
   const job = plusSearchJobs.get(jobId);
   if (!job) return;
   plusSearchJobs.set(jobId, { ...job, status: "running" });
-  const batchSize = 4;
+  const batchSize = 3;
   for (let index = 0; index < listings.length; index += batchSize) {
     const current = plusSearchJobs.get(jobId);
     if (!current || current.status === "failed") return;
