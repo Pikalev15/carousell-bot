@@ -1,8 +1,15 @@
 (() => {
-  const script = document.createElement("script");
-  script.src = "/duplicate-ui.js";
-  script.async = false;
-  document.currentScript?.insertAdjacentElement("afterend", script);
+  const current = document.currentScript;
+  const duplicateScript = document.createElement("script");
+  duplicateScript.src = "/duplicate-ui.js";
+  duplicateScript.async = false;
+  duplicateScript.addEventListener("load", () => {
+    const likesScript = document.createElement("script");
+    likesScript.src = "/likes-ui.js";
+    likesScript.async = false;
+    duplicateScript.insertAdjacentElement("afterend", likesScript);
+  });
+  current?.insertAdjacentElement("afterend", duplicateScript);
 })();
 
 const REFINED_FEEDBACK_OPTIONS = [
