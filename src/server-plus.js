@@ -5,7 +5,7 @@ import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
 import { scoreDeal } from "./filterEngine.js";
 import { buildListings, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
-import { getAlerts, getPriceHistory, getState, readJson } from "./store.js";
+import { getAlerts, getPriceHistory, getState, markAlertsRead, readJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
 import { flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
 import { saveRefinedListingLabel } from "./refinedFeedback.js";
@@ -109,6 +109,11 @@ server.on("request", async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/export/alerts.json") {
       sendJson(response, 200, { alerts: getAlerts({ limit: 1000 }) });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/alerts/mark-read") {
+      sendJson(response, 200, markAlertsRead());
       return;
     }
 
