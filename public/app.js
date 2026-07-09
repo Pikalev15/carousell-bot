@@ -442,6 +442,7 @@ async function runSearch(mode) {
     await load();
     showView("search");
     document.getElementById("search-input").value = query;
+    renderSearch();
     const source = payload.source === "carousell-web" ? "Carousell web" : payload.source;
     const added = payload.added ? ` Added ${payload.added} new listings.` : "";
     const updated = payload.updated ? ` Updated ${payload.updated} existing listings.` : "";

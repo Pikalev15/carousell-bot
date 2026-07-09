@@ -9,8 +9,8 @@ test("serves core and roadmap API endpoints", async () => {
   process.env.CAROUSELL_DB_PATH = path.join(tempDir, "test.db");
   const cacheKey = Date.now();
   await assert.doesNotReject(() => import("../src/store.js"));
-  const { server, handleTelegramCommand } = await import(`../src/server.js?db=${cacheKey}`);
-  const { closeDatabase } = await import("../src/store.js");
+  const { server, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert } = await import(`../src/server.js?db=${cacheKey}`);
+  const { closeDatabase, createAlert } = await import("../src/store.js");
   const { notifyAlert, formatAlertMessage } = await import("../src/notifier.js");
   await new Promise((resolve) => server.listen(0, resolve));
   const { port } = server.address();
@@ -43,8 +43,20 @@ test("serves core and roadmap API endpoints", async () => {
     const marked = await post(`${base}/api/alerts/mark-read`, {});
     const activity = await fetch(`${base}/api/activity`).then((response) => response.json());
     const telegram = await post(`${base}/api/config/telegram`, { enabled: false, botToken: "12345:testtoken", chatId: "42" });
+    const telegramPreserved = await post(`${base}/api/config/telegram`, { enabled: false, botToken: "", chatId: "99" });
     const telegramTest = await post(`${base}/api/telegram/test`, {});
     const fakeDealNotification = await notifyAlert({ type: "new_deal", title: "Fake deal", message: "Test notification path", listing_id: 0 });
+    const failedAlertDoesNotSuppress = shouldSuppressAlert({ type: "new_deal", listing_id: 0, watch_id: null });
+    createAlert({
+      type: "restock",
+      title: "Sent deal",
+      listing_id: 999,
+      watch_id: 42,
+      alert_key: "restock:42:999:once",
+      sent_at: new Date().toISOString(),
+      error: null
+    });
+    const sentAlertSuppresses = shouldSuppressAlert({ type: "restock", listing_id: 999, watch_id: 42, alert_key: "restock:42:999:once" });
     const fakeDealWithLink = await notifyAlert({
       type: "new_deal",
       title: "Fake deal with link",
@@ -54,6 +66,24 @@ test("serves core and roadmap API endpoints", async () => {
     });
     const alertsAfterLinkedNotification = await fetch(`${base}/api/alerts`).then((response) => response.json());
     const config = await fetch(`${base}/api/config`).then((response) => response.json());
+    const telegramGpuRanked = rankTelegramSearchResults([
+      {
+        id: 900,
+        title: "Lian Li A3-mATX Vertical GPU Kit Gen 4 PCI-E Riser",
+        description: "Riser kit only, not a graphics card",
+        category: "pc case accessory",
+        current_price: 65,
+        score: { deal_score: 80 }
+      },
+      {
+        id: 901,
+        title: "Nvidia GeForce RTX 3070 Graphics Card",
+        description: "Used RTX 3070 GPU in good working condition",
+        category: "graphics card",
+        current_price: 250,
+        score: { deal_score: 45 }
+      }
+    ], "gpu");
 
     assert.equal(health.ok, true);
     assert.equal(Array.isArray(listings), true, JSON.stringify(listings));
@@ -91,16 +121,22 @@ test("serves core and roadmap API endpoints", async () => {
     assert.equal(typeof marked.marked, "number");
     assert.equal(Array.isArray(activity), true);
     assert.equal(telegram.botTokenConfigured, true);
+    assert.equal(telegramPreserved.botTokenConfigured, true);
+    assert.equal(telegramPreserved.chatId, "99");
     assert.equal(telegramTest.ok, false);
     assert.match(telegramTest.reason || telegramTest.error, /Telegram/i);
     assert.equal(fakeDealNotification.result.ok, false);
     assert.equal(fakeDealNotification.alert.error.includes("Telegram"), true);
+    assert.equal(failedAlertDoesNotSuppress, false);
+    assert.equal(sentAlertSuppresses, true);
+    assert.match(runWatchedSearch.toString(), /awaitHydration:\s*true/);
     assert.equal(fakeDealWithLink.alert.listing_url, "https://www.carousell.sg/p/fake-deal-5");
     assert.ok(alertsAfterLinkedNotification.alerts.some((alert) => alert.listing_url === "https://www.carousell.sg/p/fake-deal-5"));
     assert.match(
       formatAlertMessage({ type: "new_deal", title: "Fake deal with link", message: "msg", listing_url: "https://www.carousell.sg/p/fake-deal-5" }),
       /https:\/\/www\.carousell\.sg\/p\/fake-deal-5/
     );
+    assert.equal(telegramGpuRanked[0].id, 901);
     assert.equal(config.telegram.botTokenConfigured, true);
   } finally {
     server.closeAllConnections();

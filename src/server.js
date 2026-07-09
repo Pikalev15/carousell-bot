@@ -7,11 +7,11 @@ import { extractLocation, hydrateCarousellListings, refreshCarousellListingDetai
 import { lookupMsrpFromGoogle } from "./msrpSearch.js";
 import { getCachedImage, proxiedImageUrl } from "./imageCache.js";
 import { maskTelegramConfig, notifyAlert, parseTelegramCommand, sendTelegramTestMessage, startTelegramCommandPolling, updateTelegramConfig } from "./notifier.js";
+import { analyzeListingRelevance, inferPreciseCategory } from "./relevanceClassifier.js";
 import { SearchScheduler } from "./scheduler.js";
 import {
   addActivity,
   bulkUpsertListings,
-  createAlert,
   deleteWatchedSearch,
   getActivity,
   getAlerts,
@@ -57,7 +57,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   startTelegramCommandPolling(handleTelegramCommand).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
 }
 
-export { server, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand };
+export { server, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert };
 
 async function handleApi(request, response, url) {
   if (request.method === "GET" && url.pathname === "/api/health") {
@@ -814,7 +814,7 @@ async function runWatchedSearch(watch) {
   const seen = new Set();
   const results = [];
   for (const term of terms) {
-    const result = await searchAndStoreWebResults(term, "web", { watch, alert: true, categoryQuery: watch.query });
+    const result = await searchAndStoreWebResults(term, "web", { watch, alert: true, categoryQuery: watch.query, awaitHydration: true });
     results.push(result);
     for (const listing of await readJson("listings")) {
       if (seen.has(listing.carousell_id)) continue;
@@ -1005,9 +1005,14 @@ async function emitAlert(alert) {
     addActivity({ type: "alert_suppressed", title: "Duplicate alert skipped", detail: alert.title, listing_id: alert.listing_id, watch_id: alert.watch_id });
     return null;
   }
-  const saved = createAlert(alert);
-  addActivity({ type: saved.type, title: saved.title, detail: saved.message, listing_id: saved.listing_id, watch_id: saved.watch_id });
-  await notifyAlert(saved);
+  const { alert: saved, result } = await notifyAlert(alert);
+  addActivity({
+    type: result.ok ? saved.type : "notification_error",
+    title: result.ok ? saved.title : "Telegram notification failed",
+    detail: result.ok ? saved.message : saved.error,
+    listing_id: saved.listing_id,
+    watch_id: saved.watch_id
+  });
   return saved;
 }
 
@@ -1015,6 +1020,7 @@ function shouldSuppressAlert(alert) {
   const key = alert.alert_key || alertKey(alert);
   const existing = getAlerts({ limit: 1000 });
   return existing.some((item) => {
+    if (!item.sent_at || item.error) return false;
     if ((item.alert_key || alertKey(item)) === key) return true;
     if (alert.type === "price_drop") return false;
     return Number(item.listing_id || 0) === Number(alert.listing_id || -1)
@@ -1053,7 +1059,7 @@ async function handleTelegramCommand(text) {
     await recordSearch(args, "telegram");
     const result = await searchAndStoreWebResults(args, "web", { alert: false });
     const state = await getState();
-    const listings = buildListings(state, args, { includeFiltered: false, minPrice: 1 }).slice(0, 5);
+    const listings = rankTelegramSearchResults(buildListings(state, args, { includeFiltered: false, minPrice: 1 }), args).slice(0, 5);
     return [`Search: ${args}`, `Added ${result.added}, updated ${result.updated}. Hydration job ${result.job?.id || "none"}.`, formatListingLines(listings)].filter(Boolean).join("\n");
   }
 
@@ -1114,6 +1120,35 @@ function formatListingLines(listings) {
       return `${index + 1}. ${listing.title} - ${formatMoney(listing.current_price)} | Score ${score} | ${listing.location || "location not listed"}${why}\n${listing.carousell_url}`;
     })
     .join("\n");
+}
+
+function rankTelegramSearchResults(listings = [], query = "") {
+  const ranked = listings
+    .map((listing) => ({ listing, relevance: telegramSearchRelevance(listing, query) }))
+    .sort((a, b) => b.relevance - a.relevance || Number(b.listing.score?.deal_score || 0) - Number(a.listing.score?.deal_score || 0));
+  const focused = ranked.filter((item) => item.relevance >= 55);
+  return (focused.length ? focused : ranked).map((item) => item.listing);
+}
+
+function telegramSearchRelevance(listing, query) {
+  const text = `${listing.title || ""} ${listing.description || ""} ${listing.category || ""}`.toLowerCase();
+  const title = String(listing.title || "").toLowerCase();
+  const queryText = String(query || "").toLowerCase();
+  const relevance = analyzeListingRelevance(listing, query);
+  const category = inferPreciseCategory(listing, listing.category || "");
+  let score = Number(relevance.score || 0) + Number(listing.score?.deal_score || 0) * 0.2;
+
+  if (/\b(?:gpu|graphics card|rtx|gtx|geforce|radeon)\b/i.test(queryText)) {
+    if (category === "graphics card") score += 55;
+    if (/\b(?:rtx|gtx|geforce|radeon|graphics card|gpu)\b/i.test(title)) score += 28;
+    if (/\b(?:pc case|case accessory|vertical gpu kit|riser|bracket|mount|casing|chassis|lian li|phanteks)\b/i.test(`${category} ${title}`)) score -= 70;
+    if (/\b(?:wtb|buyback|trade-in|trade in|we buy|looking to buy)\b/i.test(text)) score -= 90;
+  }
+
+  if (relevance.flags?.includes("wtb_or_service")) score -= 70;
+  if (relevance.flags?.includes("accessory_only")) score -= 45;
+  if (relevance.flags?.includes("irrelevant_school_book")) score -= 80;
+  return Math.max(0, Math.round(score));
 }
 
 async function categoryPreset(value) {
