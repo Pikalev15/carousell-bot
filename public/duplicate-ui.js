@@ -1,4 +1,5 @@
 const DUPLICATE_COLLAPSE_HIDE_LIMIT = 3;
+const HYDRATION_REFRESH_STEP = 3;
 const originalCardRenderer = typeof globalThis.card === "function" ? globalThis.card.bind(globalThis) : null;
 
 function collapseDuplicateGroups(listings) {
@@ -40,7 +41,7 @@ function collapseDuplicateGroups(listings) {
 }
 
 function renderCardWithSimilar(listing) {
-  const base = originalCardRenderer ? originalCardRenderer(listing) : "";
+  const base = renderBaseCard(listing);
   const similar = Array.isArray(listing._similar_listings) ? listing._similar_listings : [];
   if (!similar.length || !originalCardRenderer) return base;
   const similarMarkup = `
@@ -49,7 +50,7 @@ function renderCardWithSimilar(listing) {
       <div class="similar-listings">
         ${similar.map((item) => `
           <div class="similar-card-wrap">
-            ${originalCardRenderer({ ...item, duplicate_count: 1, duplicate_group_id: `single-${item.id}`, duplicate_role: "primary", _similar_listings: [] })}
+            ${renderBaseCard({ ...item, duplicate_count: 1, duplicate_group_id: `single-${item.id}`, duplicate_role: "primary", _similar_listings: [] })}
             <button class="linklike" data-unlink-duplicate="${listing.id}" data-other-listing-id="${item.id}">not the same item?</button>
           </div>
         `).join("")}
@@ -57,6 +58,32 @@ function renderCardWithSimilar(listing) {
     </details>
   `;
   return base.replace(/<\/article>\s*$/, `${similarMarkup}</article>`);
+}
+
+function renderBaseCard(listing) {
+  if (!originalCardRenderer) return "";
+  const hydrated = hasHydratedImage(listing);
+  const safeListing = hydrated ? listing : stripPreHydrationImages(listing);
+  const html = originalCardRenderer(safeListing);
+  return hydrated ? html : removeEmptyVisual(html);
+}
+
+function hasHydratedImage(listing) {
+  return Boolean(listing?.details_scraped_at && Array.isArray(listing.image_urls) && listing.image_urls.some(Boolean));
+}
+
+function stripPreHydrationImages(listing) {
+  return {
+    ...listing,
+    image_urls: [],
+    original_image_urls: [],
+    primary_image: "",
+    thumbnail_url: ""
+  };
+}
+
+function removeEmptyVisual(html) {
+  return String(html || "").replace(/\s*<div class="listing-visual empty">[\s\S]*?<\/div>\s*/, "\n");
 }
 
 function renderListings() {
@@ -146,6 +173,7 @@ async function runSearch(mode) {
   if (!query) return;
   const submit = mode === "more" ? document.getElementById("search-more") : document.querySelector("#search-form button[type='submit']");
   setButtonBusy(submit, mode === "more" ? "Searching more" : "Searching");
+  state._hydrationRefreshStep = 0;
   document.getElementById("search-summary").textContent = mode === "more" ? "Searching Carousell for more results..." : "Searching Carousell...";
   try {
     const payload = await api.post("/api/search", {
@@ -189,17 +217,20 @@ async function pollSearchJob(id, query) {
     state.searchJob = job;
     const done = Number(job.completed || 0);
     const total = Number(job.total || 0);
+    const refreshStep = Math.floor(done / HYDRATION_REFRESH_STEP);
+    if (refreshStep > Number(state._hydrationRefreshStep || 0)) {
+      state._hydrationRefreshStep = refreshStep;
+      await refreshHydratedSearchResults(query);
+    }
     const raw = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
     const rendered = collapseDuplicateGroups(raw);
     if (job.status === "running" || job.status === "queued") {
       document.getElementById("search-summary").textContent = `${searchSummaryText(raw.length, rendered.length, query)}. Enriching details ${done}/${total}...`;
-      setTimeout(() => pollSearchJob(id, query), 1800);
+      setTimeout(() => pollSearchJob(id, query), 1200);
       return;
     }
     if (job.status === "complete") {
-      await load();
-      state.searchResults = applyPriceFilters((state?.listings || []).filter((listing) => matchesQuery(listing, query)), "search");
-      renderSearch();
+      await refreshHydratedSearchResults(query);
       const nextRaw = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
       const nextRendered = collapseDuplicateGroups(nextRaw);
       document.getElementById("search-summary").textContent = `${searchSummaryText(nextRaw.length, nextRendered.length, query)}. Details enriched ${done}/${total}.`;
@@ -210,6 +241,12 @@ async function pollSearchJob(id, query) {
   } catch (error) {
     showToast(`Hydration status failed: ${error.message}`, "error");
   }
+}
+
+async function refreshHydratedSearchResults(query) {
+  await load();
+  state.searchResults = applyPriceFilters((state?.listings || []).filter((listing) => matchesQuery(listing, query)), "search");
+  renderSearch();
 }
 
 function priceHistoryChart(history = []) {
