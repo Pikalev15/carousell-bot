@@ -182,6 +182,22 @@ npm run export:data
 npm test
 ```
 
+## NAS Docker deployment
+
+The repo includes a NAS-friendly Docker setup:
+
+- `Dockerfile`
+- `docker-compose.yml`
+- `scripts/deploy-nas.ps1`
+
+From Windows, deploy over SSH with:
+
+```powershell
+.\scripts\deploy-nas.ps1 -HostName 192.168.1.50 -User your-nas-user -RemoteDir /volume1/docker/carousell-bot -Port 3000
+```
+
+See `docs/NAS-DOCKER-DEPLOY.md` for the full install/update flow.
+
 ## Export routes
 
 Available from the default runtime:

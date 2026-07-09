@@ -1,0 +1,18 @@
+services:
+  carousell-bot:
+    build:
+      context: .
+    image: carousell-bot:local
+    container_name: carousell-bot
+    restart: unless-stopped
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Singapore}
+      DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:-}
+    ports:
+      - "${CAROUSELL_BOT_PORT:-3000}:3000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    shm_size: "1gb"

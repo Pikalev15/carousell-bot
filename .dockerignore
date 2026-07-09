@@ -1,0 +1,17 @@
+.git
+.github
+.agents
+node_modules
+logs
+*.log
+.env
+
+data/*
+!data/config.example.json
+!data/listings.json
+!data/filters.json
+!data/seller-blacklist.json
+
+README-DATA-QUALITY.md
+docs
+test
