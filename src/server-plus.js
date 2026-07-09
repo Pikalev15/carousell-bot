@@ -5,9 +5,10 @@ import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
 import { scoreDeal } from "./filterEngine.js";
 import { buildListings, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
-import { getAlerts, getPriceHistory, getState, markAlertsRead, readJson } from "./store.js";
+import { hydrateCarousellListings } from "./carousellSearch.js";
+import { getAlerts, getPriceHistory, getState, markAlertsRead, readJson, writeJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
-import { flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
+import { enrichListingData, flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
 import { saveRefinedListingLabel } from "./refinedFeedback.js";
 import { searchAndStoreStartUrls } from "./startUrlSearch.js";
 import {
@@ -23,6 +24,7 @@ import {
 
 const port = Number(process.env.PORT || 3000);
 const [originalHandler] = server.listeners("request");
+const plusSearchJobs = new Map();
 
 server.removeAllListeners("request");
 server.on("request", async (request, response) => {
@@ -142,6 +144,14 @@ server.on("request", async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname.startsWith("/api/search/jobs/")) {
+      const id = url.pathname.split("/").pop();
+      if (plusSearchJobs.has(id)) {
+        sendJson(response, 200, plusSearchJobs.get(id));
+        return;
+      }
+    }
+
     if (request.method === "POST" && url.pathname === "/api/feedback/label") {
       const body = await readRequestBody(request);
       try {
@@ -167,6 +177,7 @@ server.on("request", async (request, response) => {
       });
       const state = await getState();
       const resultQuery = query || search.parsed?.primary?.query || "";
+      const hydrationJob = createHydrationJob(search.results || [], resultQuery);
       sendJson(response, 200, {
         query: resultQuery,
         mode: nextBody.mode || body.mode || "web",
@@ -175,7 +186,7 @@ server.on("request", async (request, response) => {
         start_url_mode: search.start_url_mode,
         added: search.added,
         updated: search.updated,
-        hydration_job: null,
+        hydration_job: hydrationJob,
         warning: null,
         results: scopedListings(buildListings(state, resultQuery, {
           minPrice: nextBody.min_price ?? body.min_price ?? 1,
@@ -224,6 +235,77 @@ async function handleTelegramCommand(text) {
     return `${await coreHandleTelegramCommand(text)}\n/snooze <listing_id> [duration] - mute one listing\n/mute <query_or_watch_id> <duration> - temporarily mute a watched search`;
   }
   return coreHandleTelegramCommand(text);
+}
+
+function createHydrationJob(listings, query) {
+  const candidates = (Array.isArray(listings) ? listings : []).filter((listing) => listing?.carousell_url);
+  if (!candidates.length) return null;
+  const id = `plus-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const job = {
+    id,
+    query,
+    status: "queued",
+    total: candidates.length,
+    completed: 0,
+    started_at: new Date().toISOString(),
+    completed_at: null,
+    error: null
+  };
+  plusSearchJobs.set(id, job);
+  hydratePlusListings(id, candidates).catch((error) => {
+    const current = plusSearchJobs.get(id) || job;
+    plusSearchJobs.set(id, { ...current, status: "failed", error: error.message, completed_at: new Date().toISOString() });
+  });
+  return job;
+}
+
+async function hydratePlusListings(jobId, listings) {
+  const job = plusSearchJobs.get(jobId);
+  if (!job) return;
+  plusSearchJobs.set(jobId, { ...job, status: "running" });
+  const batchSize = 4;
+  for (let index = 0; index < listings.length; index += batchSize) {
+    const current = plusSearchJobs.get(jobId);
+    if (!current || current.status === "failed") return;
+    const batch = listings.slice(index, index + batchSize);
+    const hydrated = await hydrateCarousellListings(batch, { concurrency: 2, jitterMs: 400 });
+    await mergeHydratedListings(hydrated);
+    plusSearchJobs.set(jobId, {
+      ...current,
+      status: "running",
+      completed: Math.min(listings.length, index + batch.length),
+      total: listings.length
+    });
+  }
+  const current = plusSearchJobs.get(jobId) || job;
+  plusSearchJobs.set(jobId, { ...current, status: "complete", completed: listings.length, completed_at: new Date().toISOString() });
+}
+
+async function mergeHydratedListings(hydratedListings) {
+  if (!hydratedListings?.length) return;
+  const current = await readJson("listings");
+  const byCarousellId = new Map(current.map((listing, index) => [listing.carousell_id, { listing, index }]));
+  let changed = false;
+  for (const hydrated of hydratedListings) {
+    const enriched = enrichListingData(hydrated);
+    const existing = byCarousellId.get(enriched.carousell_id);
+    if (!existing) continue;
+    current[existing.index] = enrichListingData({
+      ...existing.listing,
+      ...enriched,
+      id: existing.listing.id,
+      image_urls: preferHydratedImages(enriched.image_urls, existing.listing.image_urls),
+      original_image_urls: preferHydratedImages(enriched.original_image_urls || enriched.image_urls, existing.listing.original_image_urls || existing.listing.image_urls)
+    });
+    changed = true;
+  }
+  if (changed) await writeJson("listings", current);
+}
+
+function preferHydratedImages(detailImages = [], shallowImages = []) {
+  const detail = (detailImages || []).filter(Boolean);
+  const shallow = (shallowImages || []).filter(Boolean);
+  return [...new Set([...detail, ...shallow])];
 }
 
 function scopedListings(listings, config = {}) {
