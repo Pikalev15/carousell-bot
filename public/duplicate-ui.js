@@ -1,5 +1,5 @@
 const DUPLICATE_COLLAPSE_HIDE_LIMIT = 3;
-const originalCardRenderer = globalThis.card;
+const originalCardRenderer = typeof globalThis.card === "function" ? globalThis.card.bind(globalThis) : null;
 
 function collapseDuplicateGroups(listings) {
   const groups = new Map();
@@ -39,10 +39,10 @@ function collapseDuplicateGroups(listings) {
   return output;
 }
 
-function card(listing) {
+function renderCardWithSimilar(listing) {
   const base = originalCardRenderer ? originalCardRenderer(listing) : "";
   const similar = Array.isArray(listing._similar_listings) ? listing._similar_listings : [];
-  if (!similar.length) return base;
+  if (!similar.length || !originalCardRenderer) return base;
   const similarMarkup = `
     <details class="similar-expander">
       <summary>+${similar.length} similar listing${similar.length === 1 ? "" : "s"}</summary>
@@ -68,7 +68,7 @@ function renderListings() {
   });
   const rendered = collapseDuplicateGroups(sortListings(raw, document.getElementById("listing-sort").value));
   document.getElementById("listing-list").innerHTML = rendered.length
-    ? rendered.map(card).join("")
+    ? rendered.map(renderCardWithSimilar).join("")
     : `<p class="empty-state">No listings match the current filters.</p>`;
 }
 
@@ -76,7 +76,7 @@ function renderSearch() {
   const raw = sortListings(applyPriceFilters(state?.searchResults || [], "search"), document.getElementById("search-sort").value);
   const rendered = collapseDuplicateGroups(raw);
   document.getElementById("search-results").innerHTML = rendered.length
-    ? rendered.map(card).join("")
+    ? rendered.map(renderCardWithSimilar).join("")
     : `<p class="empty-state">No visible listings in this price range. Try raising the max, lowering the min, or searching a more specific phrase.</p>`;
   if (state?.lastQuery) {
     document.getElementById("search-summary").textContent = searchSummaryText(raw.length, rendered.length, state.lastQuery);
@@ -302,7 +302,7 @@ function searchSummaryText(rawCount, renderedCount, query) {
 }
 
 globalThis.collapseDuplicateGroups = collapseDuplicateGroups;
-globalThis.card = card;
+globalThis.card = renderCardWithSimilar;
 globalThis.openDetails = openDetails;
 globalThis.renderListings = renderListings;
 globalThis.renderSearch = renderSearch;
