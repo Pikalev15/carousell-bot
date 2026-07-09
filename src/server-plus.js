@@ -5,7 +5,7 @@ import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
 import { scoreDeal } from "./filterEngine.js";
 import { buildListings, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
-import { hydrateCarousellListings } from "./carousellSearch.js";
+import { hydrateCarousellListings } from "./plusHydration.js";
 import { getAlerts, getPriceHistory, getState, markAlertsRead, readJson, writeJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
 import { enrichListingData, flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
@@ -294,6 +294,10 @@ async function mergeHydratedListings(hydratedListings) {
       ...existing.listing,
       ...enriched,
       id: existing.listing.id,
+      like_count: Number(enriched.like_count ?? enriched.likes_count ?? existing.listing.like_count ?? existing.listing.likes_count ?? 0),
+      likes_count: Number(enriched.likes_count ?? enriched.like_count ?? existing.listing.likes_count ?? existing.listing.like_count ?? 0),
+      favourite_count: Number(enriched.favourite_count ?? enriched.favorite_count ?? enriched.like_count ?? existing.listing.favourite_count ?? 0),
+      favorite_count: Number(enriched.favorite_count ?? enriched.favourite_count ?? enriched.like_count ?? existing.listing.favorite_count ?? 0),
       image_urls: preferHydratedImages(enriched.image_urls, existing.listing.image_urls),
       original_image_urls: preferHydratedImages(enriched.original_image_urls || enriched.image_urls, existing.listing.original_image_urls || existing.listing.image_urls)
     });
