@@ -46,21 +46,27 @@ server.on("request", async (request, response) => {
     if (request.method === "POST" && url.pathname.match(/^\/api\/listings\/\d+\/link-duplicate$/)) {
       const id = Number(url.pathname.split("/")[3]);
       const body = await readRequestBody(request);
-      sendJson(response, 200, addDuplicateOverride(id, Number(body.other_listing_id), "merge"));
+      const result = addDuplicateOverride(id, Number(body.other_listing_id), "merge");
+      clearScopedListingsCache();
+      sendJson(response, 200, result);
       return;
     }
 
     if (request.method === "POST" && url.pathname.match(/^\/api\/listings\/\d+\/unlink-duplicate$/)) {
       const id = Number(url.pathname.split("/")[3]);
       const body = await readRequestBody(request);
-      sendJson(response, 200, addDuplicateOverride(id, Number(body.other_listing_id), "split"));
+      const result = addDuplicateOverride(id, Number(body.other_listing_id), "split");
+      clearScopedListingsCache();
+      sendJson(response, 200, result);
       return;
     }
 
     if (request.method === "POST" && url.pathname.match(/^\/api\/listings\/\d+\/snooze$/)) {
       const id = Number(url.pathname.split("/")[3]);
       const body = await readRequestBody(request);
-      sendJson(response, 200, setListingSnooze(id, body.duration, await readJson("config")));
+      const result = setListingSnooze(id, body.duration, await readJson("config"));
+      clearScopedListingsCache();
+      sendJson(response, 200, result);
       return;
     }
 
@@ -76,7 +82,9 @@ server.on("request", async (request, response) => {
     }
 
     if (request.method === "POST" && url.pathname === "/api/import") {
-      sendJson(response, 200, await importBundle(await readRequestBody(request)));
+      const result = await importBundle(await readRequestBody(request));
+      clearScopedListingsCache();
+      sendJson(response, 200, result);
       return;
     }
 
@@ -341,6 +349,16 @@ function scopedListingsCacheKey(state, query, options) {
 }
 
 function stateFingerprint(state = {}) {
+  const derivedVersion = Number(state.derivedListingsVersion);
+  if (Number.isFinite(derivedVersion)) return `derived:${derivedVersion}`;
+
+  const storeVersion = Number(state.storeVersion);
+  if (Number.isFinite(storeVersion)) return `store:${storeVersion}`;
+
+  return legacyStateFingerprint(state);
+}
+
+function legacyStateFingerprint(state = {}) {
   const listings = Array.isArray(state.listings) ? state.listings : [];
   let latestId = 0;
   let latestTimestamp = "";
