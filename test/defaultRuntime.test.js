@@ -51,6 +51,13 @@ test("scrape page diagnostics helper has valid syntax", () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+test("store reliability helper has valid syntax", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/storeReliability.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
 test("carousell search emits scrape diagnostics", () => {
   const result = spawnSync(process.execPath, ["--check", "src/carousellSearch.js"], {
     encoding: "utf8"
