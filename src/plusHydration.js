@@ -5,34 +5,75 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
 const EXCLUDED_IMAGE_PATTERN = /(avatar|profile[-_]?(pic|photo|image)|user[-_]?icon|placeholder|sprite|favicon|\blogo\b|blank\.gif|1x1|loading[-_]?spinner|badge|star-rating|verified-icon)/i;
 
+let sharedBrowserPromise = null;
+let cleanupHooksInstalled = false;
+
 export async function hydrateCarousellListings(listings, options = {}) {
   const candidates = Array.isArray(listings) ? listings.filter((listing) => normalizeUrl(listing.carousell_url || listing.url)) : [];
   if (!candidates.length) return [];
+
+  const browser = await getSharedBrowser();
+  const concurrency = Math.max(1, Math.min(4, Number(options.concurrency || 2)));
+  const jitterMs = Math.max(0, Number(options.jitterMs || 0));
+  const hydrated = new Array(candidates.length);
+  let cursor = 0;
+
+  async function worker() {
+    while (cursor < candidates.length) {
+      const index = cursor;
+      cursor += 1;
+      if (jitterMs) await delay(Math.round(Math.random() * jitterMs));
+      hydrated[index] = await hydrateOne(browser, candidates[index]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, worker));
+  return hydrated.filter(Boolean);
+}
+
+async function getSharedBrowser() {
+  if (sharedBrowserPromise) {
+    const existing = await sharedBrowserPromise.catch(() => null);
+    if (existing?.isConnected?.()) return existing;
+    sharedBrowserPromise = null;
+  }
+
+  sharedBrowserPromise = launchSharedBrowser();
+  return sharedBrowserPromise;
+}
+
+async function launchSharedBrowser() {
   const { chromium } = await importPlaywright();
   const browser = await chromium.launch({
     headless: true,
     args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
   });
-  try {
-    const concurrency = Math.max(1, Math.min(4, Number(options.concurrency || 2)));
-    const jitterMs = Math.max(0, Number(options.jitterMs || 0));
-    const hydrated = new Array(candidates.length);
-    let cursor = 0;
+  installCleanupHooks();
+  browser.on?.("disconnected", () => {
+    sharedBrowserPromise = null;
+  });
+  return browser;
+}
 
-    async function worker() {
-      while (cursor < candidates.length) {
-        const index = cursor;
-        cursor += 1;
-        if (jitterMs) await delay(Math.round(Math.random() * jitterMs));
-        hydrated[index] = await hydrateOne(browser, candidates[index]);
-      }
-    }
+async function closeSharedBrowser() {
+  const browserPromise = sharedBrowserPromise;
+  sharedBrowserPromise = null;
+  const browser = await browserPromise?.catch(() => null);
+  if (browser?.isConnected?.()) await browser.close().catch(() => {});
+}
 
-    await Promise.all(Array.from({ length: Math.min(concurrency, candidates.length) }, worker));
-    return hydrated.filter(Boolean);
-  } finally {
-    await browser.close();
-  }
+function installCleanupHooks() {
+  if (cleanupHooksInstalled) return;
+  cleanupHooksInstalled = true;
+  process.once("beforeExit", () => {
+    closeSharedBrowser().catch(() => {});
+  });
+  process.once("SIGINT", () => {
+    closeSharedBrowser().finally(() => process.exit(130));
+  });
+  process.once("SIGTERM", () => {
+    closeSharedBrowser().finally(() => process.exit(143));
+  });
 }
 
 async function hydrateOne(browser, listing) {
