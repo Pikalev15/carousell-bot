@@ -5,10 +5,12 @@ services:
     image: carousell-bot:local
     container_name: carousell-bot
     restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       PORT: 3000
       NODE_ENV: production
       TZ: ${TZ:-Asia/Singapore}
+      HOME: /tmp
       DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:-}
       GMAIL_USER: ${GMAIL_USER:-}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}

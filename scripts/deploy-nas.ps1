@@ -80,12 +80,17 @@ fi
 
 cd "$REMOTE_DIR"
 mkdir -p data logs
+PUID_VALUE="$(id -u)"
+PGID_VALUE="$(id -g)"
+chmod -R u+rwX,g+rwX data logs 2>/dev/null || true
 
 if [ ! -f .env ]; then
   cat > .env <<EOF
 CAROUSELL_BOT_PORT=$HOST_PORT
 DASHBOARD_TOKEN=$DASHBOARD_TOKEN_VALUE
 TZ=Asia/Singapore
+PUID=$PUID_VALUE
+PGID=$PGID_VALUE
 EOF
   chmod 600 .env
 else
@@ -102,6 +107,8 @@ else
 
   update_env_var "CAROUSELL_BOT_PORT" "$HOST_PORT"
   update_env_var "TZ" "Asia/Singapore"
+  update_env_var "PUID" "$PUID_VALUE"
+  update_env_var "PGID" "$PGID_VALUE"
   if [ "$TOKEN_WAS_PROVIDED" = "1" ] || ! grep -q "^DASHBOARD_TOKEN=" .env; then
     update_env_var "DASHBOARD_TOKEN" "$DASHBOARD_TOKEN_VALUE"
   fi
