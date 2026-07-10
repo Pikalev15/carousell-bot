@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   SCRAPE_STATUSES,
+  clearScrapeResultCache,
   describeScrapeFailure,
   isBaselineSafeScrape,
   isSuccessfulScrape,
@@ -49,4 +50,34 @@ test("keeps genuine zero-result pages distinct from scraper failure", () => {
   assert.equal(isSuccessfulScrape(zero), true);
   assert.equal(isBaselineSafeScrape(zero), true);
   assert.equal(describeScrapeFailure(zero), "Valid search page returned zero listings");
+});
+
+test("aggregates cached per-term scrape counts for watched search summaries", () => {
+  clearScrapeResultCache();
+  normalizeScrapeResult({ query: "rtx 3070", status: "success", ok: true, result_count: 8, anchors_found: 8, next_data_found: true });
+  normalizeScrapeResult({ query: "rtx 3080", status: "success", ok: true, result_count: 2, anchors_found: 2, next_data_found: true });
+
+  const watched = normalizeScrapeResult({ query: "GPU watch", terms: ["rtx 3070", "rtx 3080"], added: 0, updated: 0 });
+  assert.equal(watched.status, SCRAPE_STATUSES.SUCCESS);
+  assert.equal(watched.ok, true);
+  assert.equal(watched.result_count, 10);
+  assert.equal(watched.result_count_valid, true);
+  assert.equal(watched.anchors_found, 10);
+  assert.equal(watched.scrape_results.length, 2);
+  assert.equal(isBaselineSafeScrape(watched), true);
+});
+
+test("blocked cached watched terms do not become fake zero-result baselines", () => {
+  clearScrapeResultCache();
+  normalizeScrapeResult({ query: "lian li a3", status: "success", ok: true, result_count: 12, anchors_found: 12, next_data_found: true });
+  normalizeScrapeResult({ query: "dan a3 wood", status: "blocked", ok: false, result_count: null, challenge_detected: true, error: "access denied" });
+
+  const watched = normalizeScrapeResult({ query: "case watch", terms: ["lian li a3", "dan a3 wood"], added: 0, updated: 0 });
+  assert.equal(watched.status, SCRAPE_STATUSES.BLOCKED);
+  assert.equal(watched.ok, false);
+  assert.equal(watched.result_count, null);
+  assert.equal(watched.result_count_valid, false);
+  assert.equal(watched.challenge_detected, true);
+  assert.equal(isBaselineSafeScrape(watched), false);
+  assert.match(describeScrapeFailure(watched), /challenge|block/i);
 });
