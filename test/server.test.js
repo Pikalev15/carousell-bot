@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -12,24 +13,26 @@ test("serves core and roadmap API endpoints", async () => {
   const { server, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert } = await import(`../src/server.js?db=${cacheKey}`);
   const { closeDatabase, createAlert } = await import("../src/store.js");
   const { notifyAlert, formatAlertMessage } = await import("../src/notifier.js");
-  await new Promise((resolve) => server.listen(0, resolve));
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
   const { port } = server.address();
-  const base = `http://localhost:${port}`;
+  const base = `http://127.0.0.1:${port}`;
 
   try {
-    const health = await fetch(`${base}/api/health`).then((response) => response.json());
-    const listingsResponse = await fetch(`${base}/api/listings`);
-    const listings = await listingsResponse.json();
-    const allListings = await fetch(`${base}/api/listings?include_filtered=true`).then((response) => response.json());
-    const pricedListings = await fetch(`${base}/api/listings?include_filtered=true&min_price=900&max_price=1200`).then((response) => response.json());
-    const recentListings = await fetch(`${base}/api/listings?include_filtered=true&max_age_hours=24`).then((response) => response.json());
+    const health = await getJson(`${base}/api/health`);
+    const listings = await getJson(`${base}/api/listings`);
+    const allListings = await getJson(`${base}/api/listings?include_filtered=true`);
+    const pricedListings = await getJson(`${base}/api/listings?include_filtered=true&min_price=900&max_price=1200`);
+    const recentListings = await getJson(`${base}/api/listings?include_filtered=true&max_age_hours=24`);
     const search = await post(`${base}/api/search`, { query: "MacBook", mode: "local" });
     const label = await post(`${base}/api/feedback/label`, { listing_id: 1, rating: "good", asked_price: 1180 });
     const spamLabel = await post(`${base}/api/feedback/label`, { listing_id: 4, rating: "spam", asked_price: 999 });
     const badDealLabel = await post(`${base}/api/feedback/label`, { listing_id: 2, rating: "bad_deal", asked_price: 980 });
-    const model = await fetch(`${base}/api/training/model`).then((response) => response.json());
-    const priceHistory = await fetch(`${base}/api/listings/1/price-history`).then((response) => response.json());
-    const reputation = await fetch(`${base}/api/sellers/seller-100/reputation`).then((response) => response.json());
+    const model = await getJson(`${base}/api/training/model`);
+    const priceHistory = await getJson(`${base}/api/listings/1/price-history`);
+    const reputation = await getJson(`${base}/api/sellers/seller-100/reputation`);
     const watch = await post(`${base}/api/watchlist`, { query: "lian li", price_ceiling: 120, category: "pc parts", active: true });
     const presets = await patch(`${base}/api/config/category-presets`, { name: "Computers & Tech", terms: "gpu, rtx, custom nas" });
     const categoryWatch = await post(`${base}/api/watchlist`, { query: "Computers & Tech", active: true });
@@ -37,11 +40,11 @@ test("serves core and roadmap API endpoints", async () => {
     const callbackBlock = await handleTelegramCommand({ type: "callback", action: "block", listingId: 1, id: "cb-2", chatId: "42" });
     const callbackWatch = await handleTelegramCommand({ type: "callback", action: "watch", listingId: 1, id: "cb-3", chatId: "42" });
     const pausedWatch = await patch(`${base}/api/watchlist/${watch.id}`, { active: false });
-    const watchlist = await fetch(`${base}/api/watchlist`).then((response) => response.json());
+    const watchlist = await getJson(`${base}/api/watchlist`);
     const scheduler = await post(`${base}/api/scheduler`, { enabled: false, intervalMinutes: 15, jitterSeconds: 2 });
-    const alerts = await fetch(`${base}/api/alerts`).then((response) => response.json());
+    const alerts = await getJson(`${base}/api/alerts`);
     const marked = await post(`${base}/api/alerts/mark-read`, {});
-    const activity = await fetch(`${base}/api/activity`).then((response) => response.json());
+    const activity = await getJson(`${base}/api/activity`);
     const telegram = await post(`${base}/api/config/telegram`, { enabled: false, botToken: "12345:testtoken", chatId: "42" });
     const telegramPreserved = await post(`${base}/api/config/telegram`, { enabled: false, botToken: "", chatId: "99" });
     const telegramTest = await post(`${base}/api/telegram/test`, {});
@@ -64,8 +67,8 @@ test("serves core and roadmap API endpoints", async () => {
       listing_id: 5,
       listing_url: "https://www.carousell.sg/p/fake-deal-5"
     });
-    const alertsAfterLinkedNotification = await fetch(`${base}/api/alerts`).then((response) => response.json());
-    const config = await fetch(`${base}/api/config`).then((response) => response.json());
+    const alertsAfterLinkedNotification = await getJson(`${base}/api/alerts`);
+    const config = await getJson(`${base}/api/config`);
     const telegramGpuRanked = rankTelegramSearchResults([
       {
         id: 900,
@@ -146,18 +149,48 @@ test("serves core and roadmap API endpoints", async () => {
   }
 });
 
+function getJson(url) {
+  return requestJson("GET", url);
+}
+
 function post(url, body) {
-  return fetch(url, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
-  }).then((response) => response.json());
+  return requestJson("POST", url, body);
 }
 
 function patch(url, body) {
-  return fetch(url, {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body)
-  }).then((response) => response.json());
+  return requestJson("PATCH", url, body);
+}
+
+function requestJson(method, url, body = null) {
+  return new Promise((resolve, reject) => {
+    const payload = body === null ? "" : JSON.stringify(body);
+    const request = http.request(url, {
+      method,
+      headers: {
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength(payload),
+        connection: "close"
+      }
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("error", reject);
+      response.on("end", () => {
+        const raw = Buffer.concat(chunks).toString("utf8");
+        try {
+          const parsed = raw ? JSON.parse(raw) : {};
+          if (response.statusCode >= 400) {
+            reject(new Error(parsed.error || `Request failed (${response.statusCode})`));
+            return;
+          }
+          resolve(parsed);
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.on("error", reject);
+    if (payload) request.write(payload);
+    request.end();
+  });
 }
