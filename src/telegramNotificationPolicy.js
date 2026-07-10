@@ -22,6 +22,7 @@ export const TELEGRAM_ALERT_DEFAULTS = {
   }
 };
 
+const MODE_ORDER = ["smart", "instant", "digest_only"];
 const MODE_LABELS = {
   smart: "Smart",
   instant: "Instant",
@@ -146,32 +147,41 @@ export function formatTelegramDigestMessage(selected = [], totalQueued = selecte
 export function telegramSettingsSummary(config = {}) {
   const settings = telegramAlertSettings(config);
   const scheduler = config.scheduler || {};
+  const nextMode = nextTelegramMode(settings.mode);
   return [
     "⚙️ Telegram Bot Settings",
     "",
     `Notifications: ${settings.enabled ? MODE_LABELS[settings.mode] || settings.mode : "Off"}`,
+    `Next mode button: ${MODE_LABELS[nextMode] || nextMode}`,
     `Instant threshold: ${settings.minInstantScore}+`,
-    `Max instant alerts: ${settings.maxInstantPerHour}/hour`,
+    `Max instant alerts: ${settings.maxInstantPerHour === 0 ? "unlimited" : `${settings.maxInstantPerHour}/hour`}`,
     `Quiet hours: ${settings.quietHours.enabled ? `${settings.quietHours.start}–${settings.quietHours.end}` : "Off"} (${settings.quietHours.timezone})`,
+    `Urgent DND bypass: ${settings.quietHours.allowUrgentDeals ? `On at ${settings.quietHours.urgentScoreThreshold}+` : `Off (${settings.quietHours.urgentScoreThreshold}+)`}`,
     `Morning digest: ${settings.digest.enabled ? `${settings.digest.time}, top ${settings.digest.maxItems}, min score ${settings.digest.minScore}+` : "Off"}`,
     `Search interval: ${Number(scheduler.intervalMinutes || 30)} min`,
     "",
     "Commands:",
     "/settings mode smart|instant|digest",
+    "/settings interval 5|10|15|30|60",
     "/settings dnd on|off|23:00 07:30",
     "/settings digest on|off|07:45|now",
-    "/settings interval 15",
     "/settings threshold 75",
+    "/settings maxhour 5",
+    "/settings minscore 60",
+    "/settings top 10",
+    "/settings urgent on|off|95",
     "/settings block faulty, no display, spoilt"
   ].join("\n");
 }
 
 export function telegramSettingsKeyboard(config = {}) {
   const settings = telegramAlertSettings(config);
+  const scheduler = config.scheduler || {};
+  const nextMode = nextTelegramMode(settings.mode);
   return {
     inline_keyboard: [
       [
-        { text: `Mode: ${MODE_LABELS[settings.mode] || settings.mode}`, callback_data: "tgset:mode" },
+        { text: `Mode → ${MODE_LABELS[nextMode] || nextMode}`, callback_data: "tgset:mode" },
         { text: settings.enabled ? "Alerts On" : "Alerts Off", callback_data: "tgset:enabled" }
       ],
       [
@@ -179,16 +189,52 @@ export function telegramSettingsKeyboard(config = {}) {
         { text: settings.digest.enabled ? "Digest On" : "Digest Off", callback_data: "tgset:digest" }
       ],
       [
-        { text: "Threshold -5", callback_data: "tgset:threshold_down" },
-        { text: "Threshold +5", callback_data: "tgset:threshold_up" }
+        { text: settings.quietHours.allowUrgentDeals ? "Urgent bypass On" : "Urgent bypass Off", callback_data: "tgset:urgent" },
+        { text: "Send digest now", callback_data: "tgset:digest_now" }
+      ],
+      [
+        { text: "Instant -5", callback_data: "tgset:threshold_down" },
+        { text: `Instant ${settings.minInstantScore}+`, callback_data: "tgset:noop" },
+        { text: "Instant +5", callback_data: "tgset:threshold_up" }
+      ],
+      [
+        { text: "Max/hour -1", callback_data: "tgset:maxhour_down" },
+        { text: `Max ${settings.maxInstantPerHour}/h`, callback_data: "tgset:noop" },
+        { text: "Max/hour +1", callback_data: "tgset:maxhour_up" }
+      ],
+      [
+        { text: "Digest score -5", callback_data: "tgset:digest_score_down" },
+        { text: `Digest ${settings.digest.minScore}+`, callback_data: "tgset:noop" },
+        { text: "Digest score +5", callback_data: "tgset:digest_score_up" }
+      ],
+      [
+        { text: "Digest top -1", callback_data: "tgset:digest_top_down" },
+        { text: `Top ${settings.digest.maxItems}`, callback_data: "tgset:noop" },
+        { text: "Digest top +1", callback_data: "tgset:digest_top_up" }
+      ],
+      [
+        { text: "5m", callback_data: "tgset:interval_set:5" },
+        { text: "10m", callback_data: "tgset:interval_set:10" },
+        { text: "15m", callback_data: "tgset:interval_set:15" },
+        { text: "30m", callback_data: "tgset:interval_set:30" },
+        { text: "60m", callback_data: "tgset:interval_set:60" }
       ],
       [
         { text: "Interval -5", callback_data: "tgset:interval_down" },
+        { text: `Current ${Number(scheduler.intervalMinutes || 30)}m`, callback_data: "tgset:noop" },
         { text: "Interval +5", callback_data: "tgset:interval_up" }
       ],
-      [{ text: "Send digest now", callback_data: "tgset:digest_now" }]
+      [
+        { text: "DND 23:00–07:30", callback_data: "tgset:dnd_default" },
+        { text: "Digest 07:45", callback_data: "tgset:digest_default" }
+      ]
     ]
   };
+}
+
+export function nextTelegramMode(mode) {
+  const normalized = normalizeMode(mode);
+  return MODE_ORDER[(MODE_ORDER.indexOf(normalized) + 1) % MODE_ORDER.length];
 }
 
 export function nextTelegramDigestDate(config = {}, from = new Date()) {

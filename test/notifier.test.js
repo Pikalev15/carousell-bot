@@ -60,7 +60,8 @@ test("builds inline action keyboard and parses callback data", () => {
   assert.equal(keyboard.inline_keyboard[0][0].text, "Open");
   assert.equal(keyboard.inline_keyboard[1][0].callback_data, "cb:good:42");
   assert.deepEqual(parseTelegramCallbackData("cb:bad_deal:42"), { action: "bad_deal", listingId: 42 });
-  assert.deepEqual(parseTelegramCallbackData("tgset:dnd"), { kind: "settings", action: "dnd", settingAction: "dnd", listingId: 0 });
+  assert.deepEqual(parseTelegramCallbackData("tgset:dnd"), { kind: "settings", action: "dnd", settingAction: "dnd", value: "", listingId: 0 });
+  assert.deepEqual(parseTelegramCallbackData("tgset:interval_set:15"), { kind: "settings", action: "interval_set", settingAction: "interval_set", value: "15", listingId: 0 });
   assert.deepEqual(parseTelegramCallbackData("bad"), { action: "", listingId: 0 });
 });
 
