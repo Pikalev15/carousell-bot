@@ -1,4 +1,4 @@
-import { parseMoney } from "./currency.js";
+import { extractLikelySellingPriceFromText } from "./priceExtraction.js";
 
 const CAROUSELL_BASE_URL = "https://www.carousell.sg";
 const USER_AGENT =
@@ -339,21 +339,7 @@ function extractLocationFromFreeText(value = "") {
 }
 
 function extractRealPriceFromDescription(description) {
-  const text = String(description || "");
-  const patterns = [
-    /(?:real|actual|selling|letting go|take|deal|price|asking|each|all for)\s*(?:price)?\s*(?:is|at|:|-)?\s*(?:S\$|SGD|US\$|USD|\$)\s?([\d,]+(?:\.\d+)?)/i,
-    /(?:S\$|SGD|US\$|USD|\$)\s?([\d,]+(?:\.\d+)?)\s*(?:firm|fixed|nett|each|for all|only)?/i
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (!match) continue;
-    const context = text.slice(Math.max(0, match.index - 40), match.index + match[0].length + 40);
-    if (/\b(?:deliver|delivery|shipping|courier|postage|additional|deposit|top up|top-up)\b/i.test(context)) continue;
-    const money = parseMoney(match[0], { defaultCurrency: /\b(?:usd|us\$)\b/i.test(context) ? "USD" : "SGD" });
-    const price = money.sgd || Math.round(Number(match[1].replaceAll(",", "")));
-    if (price > 1 && price < 100000) return price;
-  }
-  return 0;
+  return extractLikelySellingPriceFromText(description);
 }
 
 function mergeImageUrls(...sources) {
