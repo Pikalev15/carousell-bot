@@ -281,8 +281,8 @@ function getBadPricerReasons(listing, phraseMatches, config) {
   return reasons;
 }
 
-function isWtbOrServiceListing(text, listing = {}) {
-  const title = String(listing.title || "").toLowerCase();
+function isWtbOrServiceListing(text, listing) {
+  const title = String(listing?.title || "").toLowerCase();
   if (/^(?:wtb|lf|looking for|buying|we buy|i buy)\b/i.test(title)) return true;
   return WTB_SERVICE_PATTERN.test(text);
 }
