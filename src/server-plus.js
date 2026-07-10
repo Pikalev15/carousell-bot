@@ -1,5 +1,8 @@
-import { startServer } from "./server-unified.js";
+import { pathToFileURL } from "node:url";
+import { startServer } from "./server.js";
 
-export { server, handleTelegramCommand, startServer } from "./server-unified.js";
+export { server, handleTelegramCommand, startServer } from "./server.js";
 
-startServer();
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  startServer();
+}

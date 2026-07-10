@@ -114,7 +114,7 @@ test("serves core and roadmap API endpoints", async () => {
     assert.equal(categoryWatch.kind, "category");
     assert.ok(categoryWatch.terms.includes("gpu"));
     assert.ok(categoryWatch.terms.includes("custom nas"));
-    assert.match(callbackLabel, /Marked bad deal/);
+    assert.match(callbackLabel, /(Marked|Trained as) bad deal/);
     assert.match(callbackBlock, /Blocked/);
     assert.match(callbackWatch, /Watching similar/);
     assert.equal(pausedWatch.active, false);

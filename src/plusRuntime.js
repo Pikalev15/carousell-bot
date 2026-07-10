@@ -1,4 +1,5 @@
 import { performance } from "node:perf_hooks";
+import { Readable } from "node:stream";
 import { authorizeDashboardRequest } from "./dashboardAuth.js";
 import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
@@ -187,6 +188,10 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
 
       if (request.method === "POST" && url.pathname === "/api/search") {
         const body = await readRequestBody(request);
+        if (String(body.mode || "").toLowerCase() === "local" && !body.startUrl && !body.startUrls && !body.urls) {
+          await originalHandler(cloneJsonRequest(request, body), response);
+          return;
+        }
         const nextBody = searchBodyFromStartUrls(body);
         const query = String(nextBody.query || body.query || "").trim();
         if (!query && !nextBody.startUrls?.length) {
@@ -491,6 +496,19 @@ function sendCsv(response, filename, csv) {
     "content-disposition": `attachment; filename="${filename}"`
   });
   response.end(csv);
+}
+
+function cloneJsonRequest(request, body = {}) {
+  const payload = Buffer.from(JSON.stringify(body || {}));
+  const cloned = Readable.from([payload]);
+  cloned.method = request.method;
+  cloned.url = request.url;
+  cloned.headers = {
+    ...request.headers,
+    "content-type": "application/json",
+    "content-length": String(payload.length)
+  };
+  return cloned;
 }
 
 function sendJson(response, status, value) {
