@@ -342,23 +342,23 @@ function scopedListingsCacheKey(state, query, options) {
 
 function stateFingerprint(state = {}) {
   const listings = Array.isArray(state.listings) ? state.listings : [];
-  let latest = 0;
+  let latestId = 0;
+  let latestTimestamp = "";
   let priceHash = 0;
 
   for (const listing of listings) {
     const id = Number(listing.id || 0);
     const price = Math.round(Number(listing.current_price || 0));
-    latest = Math.max(
-      latest,
-      id,
-      Date.parse(listing.scraped_at || listing.details_scraped_at || listing.updated_at || listing.listed_at || "") || 0
-    );
+    const timestamp = latestListingTimestamp(listing);
+    if (id > latestId) latestId = id;
+    if (timestamp > latestTimestamp) latestTimestamp = timestamp;
     priceHash = (priceHash + ((id * 31 + price) % 1_000_003)) % 1_000_003;
   }
 
   return [
     listings.length,
-    latest,
+    latestId,
+    latestTimestamp,
     priceHash,
     Array.isArray(state.filters) ? state.filters.length : 0,
     Array.isArray(state.sellers) ? state.sellers.length : 0,
@@ -366,6 +366,18 @@ function stateFingerprint(state = {}) {
     hashValue(state.config || {}),
     hashValue(state.trainingModel || {})
   ].join(":");
+}
+
+function latestListingTimestamp(listing = {}) {
+  return firstIsoTimestamp(listing.scraped_at)
+    || firstIsoTimestamp(listing.details_scraped_at)
+    || firstIsoTimestamp(listing.updated_at)
+    || firstIsoTimestamp(listing.listed_at);
+}
+
+function firstIsoTimestamp(value) {
+  const text = String(value || "");
+  return /^\d{4}-\d{2}-\d{2}T/.test(text) ? text : "";
 }
 
 function filterFingerprint(query, options = {}) {
