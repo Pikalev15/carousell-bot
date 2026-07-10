@@ -19,6 +19,9 @@ const conditionScore = {
 };
 
 const PLACEHOLDER_PRICES = new Set([0, 1, 8, 88, 888, 8888, 9999, 12345, 99999]);
+const WTB_SERVICE_PATTERN = /\b(?:wtb|want(?:ing)? to buy|looking to buy|looking for|lf\b|anyone selling|anyone got|we buy|i buy|buying all|buyback|buy back|cashout|trade[\s-]?in|sell(?:ing)? your|send me what you have|pm me if selling|dm me if selling|quote only|repair service|servicing|diagnostic|data recovery|installation service|upgrade service|cleaning service|custom build service|pm for quote)\b/i;
+const LOOKING_FOR_PATTERN = /\b(?:searching for|does anyone have|can anyone recommend|recommend me|where to buy|where can i find)\b/i;
+const OFF_PLATFORM_SPAM_PATTERN = /\b(?:telegram only|whatsapp only|wa only|paynow first|deposit first|reservation fee|reserve fee|contact me on telegram|contact me on whatsapp)\b/i;
 const ACCESSORY_PATTERN = /\b(?:panel|front panel|side panel|glass panel|riser|vertical gpu kit|bracket|mount|cable|adapter|screws?|stand|tray|cover|dust filter|mesh kit|extension|sleeved cable|wood panel|tempered glass only|panel only|upgrade kit)\b/i;
 const ACCESSORY_ONLY_PATTERN = /\b(?:panel|front panel|side panel|glass panel|wood panel|riser|vertical gpu kit|bracket|mount|cable|adapter|screws?|stand|tray|cover|dust filter|mesh kit|extension|sleeved cable|tempered glass|upgrade kit)\b.{0,80}\bonly\b|\bonly\b.{0,80}\b(?:panel|riser|bracket|mount|cable|adapter|cover|tray|kit)\b|\bnot\s+(?:the\s+)?full\s+(?:case|pc|build|set)\b/i;
 const FULL_PRODUCT_PATTERN = /\b(?:full case|complete case|whole case|case included|full build|complete build|working pc|whole set)\b/i;
@@ -41,14 +44,19 @@ export function classifyListing(listing, filters, sellerBlacklist, config) {
     reasons.push(`${match.phrase}: ${match.reason || match.type}`);
   }
 
-  if (/\b(wtb|want to buy|looking to buy|anyone selling)\b/i.test(text)) {
-    reasons.push("Looking-to-buy language");
-    return result(POST_TYPES.WTB, true, 95, reasons);
+  if (isWtbOrServiceListing(text, listing)) {
+    reasons.push("WTB/buyback/service language");
+    return result(POST_TYPES.WTB, true, 98, reasons);
   }
 
-  if (/\b(looking for|searching for|does anyone have|can anyone recommend)\b/i.test(text)) {
+  if (LOOKING_FOR_PATTERN.test(text)) {
     reasons.push("Looking-for language");
     return result(POST_TYPES.WTF, true, 90, reasons);
+  }
+
+  if (OFF_PLATFORM_SPAM_PATTERN.test(text)) {
+    reasons.push("Off-platform payment/contact spam pattern");
+    return result(POST_TYPES.SPAM, true, 95, reasons);
   }
 
   const spamMatches = phraseMatches.filter((match) => match.type === "spam_keyword");
@@ -193,6 +201,8 @@ function getDealPenalty(listing, context = {}) {
   if (/\b(no nego|no negotiation|fixed|firm|no lowball|lowballers ignored)\b/.test(text)) penalty += 8;
   if (/\b(repair|faulty|spoilt|not working|for parts|issue|defect|missing|cracked|broken)\b/.test(text)) penalty += 18;
   if (/\b(deposit|preorder|pre-order|top up|trade only|swap only)\b/.test(text)) penalty += 12;
+  if (WTB_SERVICE_PATTERN.test(text)) penalty += 30;
+  if (OFF_PLATFORM_SPAM_PATTERN.test(text)) penalty += 30;
   if (PLACEHOLDER_PRICES.has(Number(listing.current_price || 0))) penalty += 20;
   if (context.accessory) penalty += 15;
   if (context.bundle) penalty += 7;
@@ -227,6 +237,7 @@ function scoreRiskFlags(listing, context = {}) {
   if (!context.median) flags.push("no_reference_median");
   if (context.median && context.priceRatio < 0.35) flags.push("too_far_below_market_verify");
   if (String(listing.description || "").length < 25) flags.push("thin_description");
+  if (WTB_SERVICE_PATTERN.test(`${listing.title || ""} ${listing.description || ""}`)) flags.push("wtb_or_service_language");
   return flags;
 }
 
@@ -268,6 +279,12 @@ function getBadPricerReasons(listing, phraseMatches, config) {
   }
 
   return reasons;
+}
+
+function isWtbOrServiceListing(text, listing = {}) {
+  const title = String(listing.title || "").toLowerCase();
+  if (/^(?:wtb|lf|looking for|buying|we buy|i buy)\b/i.test(title)) return true;
+  return WTB_SERVICE_PATTERN.test(text);
 }
 
 function hasSuspiciousShape(text, listing) {
