@@ -1,4 +1,5 @@
 import { createAlert, readJson, writeJson } from "./store.js";
+import { nextRuntimeId } from "./storeReliability.js";
 
 const TELEGRAM_API = "https://api.telegram.org";
 export const TELEGRAM_COMMANDS = [
@@ -134,6 +135,7 @@ export async function notifyAlert(input) {
   }));
   await recordTelegramStatus(result);
   const next = createAlert({
+    id: alert.id || nextRuntimeId(),
     ...alert,
     sent_at: result.ok ? new Date().toISOString() : null,
     error: result.ok ? null : result.error || result.reason || "Telegram notification failed"
