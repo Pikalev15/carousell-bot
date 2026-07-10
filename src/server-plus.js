@@ -348,14 +348,15 @@ function scopedListingsCacheKey(state, query, options) {
   return `${stateFingerprint(state)}|${filterFingerprint(query, options)}`;
 }
 
-function stateFingerprint(state = {}) {
-  const derivedVersion = Number(state.derivedListingsVersion);
-  if (Number.isFinite(derivedVersion)) return `derived:${derivedVersion}`;
+function stateFingerprint(state) {
+  const safeState = state || {};
+  const derivedVersion = Number(safeState.derivedListingsVersion);
+  if (Number.isFinite(derivedVersion)) return "derived:" + derivedVersion;
 
-  const storeVersion = Number(state.storeVersion);
-  if (Number.isFinite(storeVersion)) return `store:${storeVersion}`;
+  const storeVersion = Number(safeState.storeVersion);
+  if (Number.isFinite(storeVersion)) return "store:" + storeVersion;
 
-  return legacyStateFingerprint(state);
+  return legacyStateFingerprint(safeState);
 }
 
 function legacyStateFingerprint(state = {}) {
