@@ -10,7 +10,7 @@ import { hydrateCarousellListings } from "./plusHydration.js";
 import { getAlerts, getPriceHistory, getState, markAlertsRead, readJson, writeJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
 import { enrichListingData, flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
-import { saveRefinedListingLabel } from "./refinedFeedback.js";
+import { REFINED_RATINGS, saveRefinedListingLabel } from "./refinedFeedback.js";
 import { searchAndStoreStartUrls } from "./startUrlSearch.js";
 import {
   addDuplicateOverride,
@@ -29,6 +29,16 @@ const plusSearchJobs = new Map();
 const scopedListingsCache = new Map();
 const SCOPED_LISTINGS_CACHE_MAX = Math.max(5, Number(process.env.LISTINGS_CACHE_MAX || 40));
 const PERF_LOG_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PERF_LOG || ""));
+const TELEGRAM_RATING_ALIASES = new Map([
+  ["good", "good_deal"],
+  ["bad", "bad_deal"],
+  ["spam", "spam"],
+  ["wtb", "wtb_service"],
+  ["service", "wtb_service"],
+  ["accessory", "accessory_only"],
+  ["wrongcat", "wrong_category"],
+  ["dupe", "duplicate_listing"]
+]);
 
 server.removeAllListeners("request");
 server.on("request", async (request, response) => {
@@ -230,7 +240,11 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
 }
 
 async function handleTelegramCommand(text) {
-  if (typeof text === "object") return coreHandleTelegramCommand(text);
+  if (typeof text === "object") {
+    const handled = await handleTelegramTrainingCallback(text);
+    if (handled) return handled;
+    return coreHandleTelegramCommand(text);
+  }
   const [command, ...parts] = String(text || "").trim().split(/\s+/);
   if (command === "/snooze") {
     const [listingId, duration] = parts;
@@ -248,6 +262,70 @@ async function handleTelegramCommand(text) {
     return `${await coreHandleTelegramCommand(text)}\n/snooze <listing_id> [duration] - mute one listing\n/mute <query_or_watch_id> <duration> - temporarily mute a watched search`;
   }
   return coreHandleTelegramCommand(text);
+}
+
+async function handleTelegramTrainingCallback(callback) {
+  const listingId = Number(callback.listingId || 0);
+  if (!listingId) return null;
+
+  if (callback.action === "train") {
+    const listing = await findListingForTelegram(listingId);
+    if (!listing) return { answer: "Listing not found" };
+    return {
+      answer: "Choose a training label",
+      message: `Train listing #${listingId}: ${listing.title}\nPick the reason so future alerts get smarter.`,
+      replyMarkup: telegramTrainingMenu(listingId)
+    };
+  }
+
+  const refinedRating = telegramRatingForAction(callback.action);
+  if (!refinedRating) return null;
+  const listing = await findListingForTelegram(listingId);
+  if (!listing) return { answer: "Listing not found" };
+  const label = await saveRefinedListingLabel(listingId, refinedRating, {
+    asked_price: listing.current_price,
+    notes: `Telegram training: ${refinedRating}`
+  });
+  clearScopedListingsCache();
+  return `Trained as ${label.refined_rating.replaceAll("_", " ")}`;
+}
+
+async function findListingForTelegram(listingId) {
+  const listings = await readJson("listings");
+  return listings.find((item) => Number(item.id) === Number(listingId)) || null;
+}
+
+function telegramRatingForAction(action) {
+  const value = String(action || "").trim().toLowerCase();
+  const normalized = TELEGRAM_RATING_ALIASES.get(value) || value;
+  return REFINED_RATINGS.includes(normalized) && normalized !== "unmarked" ? normalized : "";
+}
+
+function telegramTrainingMenu(id) {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Great", callback_data: `cb:great_deal:${id}` },
+        { text: "Good", callback_data: `cb:good_deal:${id}` },
+        { text: "Fair", callback_data: `cb:fair_deal:${id}` }
+      ],
+      [
+        { text: "Bad deal", callback_data: `cb:bad_deal:${id}` },
+        { text: "Overpriced", callback_data: `cb:overpriced:${id}` },
+        { text: "Bad pricer", callback_data: `cb:bad_pricer:${id}` }
+      ],
+      [
+        { text: "WTB/service", callback_data: `cb:wtb_service:${id}` },
+        { text: "Accessory only", callback_data: `cb:accessory_only:${id}` },
+        { text: "Wrong cat", callback_data: `cb:wrong_category:${id}` }
+      ],
+      [
+        { text: "Duplicate", callback_data: `cb:duplicate_listing:${id}` },
+        { text: "Irrelevant", callback_data: `cb:irrelevant:${id}` },
+        { text: "Not spam", callback_data: `cb:not_spam:${id}` }
+      ]
+    ]
+  };
 }
 
 function createHydrationJob(listings, query) {
