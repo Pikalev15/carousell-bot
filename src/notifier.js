@@ -24,7 +24,8 @@ export async function sendTelegramMessage(message, config = null, options = {}) 
     text: message,
     disable_web_page_preview: true
   };
-  if (options.replyMarkup) body.reply_markup = options.replyMarkup;
+  const replyMarkup = options.replyMarkup || options.reply_markup;
+  if (replyMarkup) body.reply_markup = replyMarkup;
 
   const response = await fetch(`${TELEGRAM_API}/bot${token}/sendMessage`, {
     method: "POST",
@@ -73,10 +74,14 @@ export async function startTelegramCommandPolling(handleCommand) {
           }
           const parsed = parseTelegramCallbackData(callback.data);
           const reply = await handleCommand({ ...parsed, type: "callback", id: callback.id, chatId, message: callback.message, data: callback.data }, { chatId, config }).catch((error) => `Action failed: ${error.message}`);
-          const callbackText = typeof reply === "object" ? reply.answer || reply.text || "Done" : reply;
-          await answerCallbackQuery(callback.id, callbackText || "Done", config).catch(() => {});
           if (reply && typeof reply === "object" && reply.message) {
-            await sendTelegramMessage(reply.message, config, { chatId, replyMarkup: reply.replyMarkup }).catch(() => {});
+            const replyMarkup = reply.replyMarkup || reply.reply_markup;
+            const result = await sendTelegramMessage(reply.message, config, { chatId, replyMarkup }).catch((error) => ({ ok: false, error: error.message }));
+            const callbackText = result.ok ? reply.answer || reply.text || "Done" : `Message failed: ${result.error}`;
+            await answerCallbackQuery(callback.id, callbackText || "Done", config).catch(() => {});
+          } else {
+            const callbackText = typeof reply === "object" ? reply.answer || reply.text || "Done" : reply;
+            await answerCallbackQuery(callback.id, callbackText || "Done", config).catch(() => {});
           }
           continue;
         }
