@@ -8,6 +8,7 @@ import { scoreDeal } from "./filterEngine.js";
 import { buildListings, dailyDigest, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
 import { hydrateCarousellListings } from "./plusHydration.js";
 import { getAlerts, getPriceHistory, getState, markAlertsRead, readJson, writeJson } from "./store.js";
+import { markAllAlertsRead } from "./storeReliability.js";
 import { startTelegramCommandPolling } from "./notifier.js";
 import { enrichListingData, flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
 import { REFINED_RATINGS, saveRefinedListingLabel } from "./refinedFeedback.js";
@@ -137,7 +138,7 @@ server.on("request", async (request, response) => {
     }
 
     if (request.method === "POST" && url.pathname === "/api/alerts/mark-read") {
-      sendJson(response, 200, markAlertsRead());
+      sendJson(response, 200, await markAllAlertsRead());
       return;
     }
 
@@ -422,7 +423,7 @@ function cachedScopedListings(state, query = "", options = {}) {
   return listings;
 }
 
-function scopedListingsCacheKey(state, query, options) {
+function scopedListingsCacheKey(state, query, options = {}) {
   return `${stateFingerprint(state)}|${filterFingerprint(query, options)}`;
 }
 
