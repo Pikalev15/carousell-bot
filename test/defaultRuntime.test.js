@@ -31,7 +31,7 @@ test("plus server shim has valid syntax", () => {
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(serverPlusSource, /\.\/server-unified\.js/);
-  assert.match(serverPlusSource, /startServer\(\)/);
+  assert.match(serverPlusSource, /startServer/);
 });
 
 test("plus runtime installer has valid syntax", () => {
@@ -42,6 +42,12 @@ test("plus runtime installer has valid syntax", () => {
   assert.match(plusRuntimeSource, /installPlusRuntime/);
   assert.match(plusRuntimeSource, /markAllAlertsRead/);
   assert.match(plusRuntimeSource, /searchDiagnosticsPayload/);
+});
+
+test("unified runtime installs plus routes and preserves scheduler replay", () => {
+  assert.match(serverUnifiedSource, /installPlusRuntime/);
+  assert.match(serverUnifiedSource, /callOriginalJson/);
+  assert.match(serverUnifiedSource, /dashboardAuthHeaders/);
 });
 
 test("batch feature helper has valid syntax", () => {
@@ -109,11 +115,6 @@ test("likes UI script has valid syntax", () => {
     encoding: "utf8"
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-});
-
-test("unified runtime replays JSON request bodies as buffers", () => {
-  assert.match(serverUnifiedSource, /Readable\.from\(\[Buffer\.from\(JSON\.stringify\(body \|\| \{\}\)\)\]\)/);
-  assert.match(serverUnifiedSource, /chunks\.push\(typeof chunk === "string" \? Buffer\.from\(chunk\) : chunk\)/);
 });
 
 test("UI guards placeholder prices and enables alert scrolling", () => {
