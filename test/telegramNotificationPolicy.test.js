@@ -5,8 +5,10 @@ import {
   formatTelegramDigestMessage,
   isQuietHoursActive,
   mergeTelegramAlertSettings,
+  nextTelegramMode,
   selectTelegramDigestAlerts,
-  telegramAlertSettings
+  telegramAlertSettings,
+  telegramSettingsKeyboard
 } from "../src/telegramNotificationPolicy.js";
 
 test("defaults Telegram alert settings for smart quiet-hour digests", () => {
@@ -44,4 +46,22 @@ test("selects best queued listings for Telegram digest", () => {
   assert.deepEqual(selected.selected.map((alert) => alert.id), [2, 1]);
   assert.deepEqual(selected.skipped.map((alert) => alert.id).sort(), [3]);
   assert.match(formatTelegramDigestMessage(selected.selected, selected.queued.length, config), /Best GPU/);
+});
+
+test("settings mode button shows the next mode, not the current mode", () => {
+  const config = mergeTelegramAlertSettings({}, { mode: "smart" });
+  const keyboard = telegramSettingsKeyboard(config);
+  assert.equal(nextTelegramMode("smart"), "instant");
+  assert.equal(keyboard.inline_keyboard[0][0].text, "Mode → Instant");
+});
+
+test("settings keyboard exposes interval presets and extra tuning controls", () => {
+  const config = mergeTelegramAlertSettings({ scheduler: { intervalMinutes: 30 } }, { maxInstantPerHour: 5, digest: { maxItems: 10, minScore: 60 } });
+  const flattened = telegramSettingsKeyboard(config).inline_keyboard.flat().map((button) => `${button.text}:${button.callback_data}`);
+  assert(flattened.includes("15m:tgset:interval_set:15"));
+  assert(flattened.includes("60m:tgset:interval_set:60"));
+  assert(flattened.some((item) => item.includes("tgset:maxhour_up")));
+  assert(flattened.some((item) => item.includes("tgset:digest_score_up")));
+  assert(flattened.some((item) => item.includes("tgset:digest_top_up")));
+  assert(flattened.some((item) => item.includes("tgset:urgent")));
 });
