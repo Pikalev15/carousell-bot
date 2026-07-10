@@ -40,6 +40,12 @@ function extractPriceFromCandidate(line) {
 
 function parsePrice(raw, context = "") {
   const money = parseMoney(raw, { defaultCurrency: /\b(?:usd|us\$)\b/i.test(context) ? "USD" : "SGD" });
-  const price = Math.round(Number(money.sgd || 0));
+  const sgdPrice = money?.sgd;
+  if (sgdPrice) {
+    const price = Math.round(Number(sgdPrice));
+    if (price > 1 && price < 100000) return price;
+  }
+  const cleanNum = raw.replace(/[^0-9.]/g, "");
+  const price = Math.round(Number(cleanNum || 0));
   return price > 1 && price < 100000 ? price : 0;
 }
