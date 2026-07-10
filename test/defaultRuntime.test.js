@@ -44,7 +44,7 @@ test("plus hydration helper has valid syntax", () => {
 });
 
 test("scrape result helpers have valid syntax", () => {
-  for (const file of ["src/scrapeResult.js", "src/scrapeHealth.js", "src/scrapePageDiagnostics.js"]) {
+  for (const file of ["src/scrapeResult.js", "src/scrapeHealth.js", "src/scrapePageDiagnostics.js", "src/storeReliability.js"]) {
     const result = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" });
     assert.equal(result.status, 0, `${file}\n${result.stderr || result.stdout}`);
   }
