@@ -1,4 +1,5 @@
 import http from "node:http";
+import { Readable } from "node:stream";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -6,7 +7,7 @@ import { classifyListing, scoreDeal } from "./filterEngine.js";
 import { extractLocation, hydrateCarousellListings, refreshCarousellListingDetails, searchCarousell } from "./carousellSearch.js";
 import { lookupMsrpFromGoogle } from "./msrpSearch.js";
 import { getCachedImage, proxiedImageUrl } from "./imageCache.js";
-import { authorizeDashboardRequest, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
+import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
 import { createDailyDigestJob } from "./jobs/dailyDigest.js";
 import { getDigestEmailConfig, maskDigestEmailConfig, sendDigestTestEmail } from "./services/emailService.js";
 import { maskTelegramConfig, notifyAlert, parseTelegramCommand, sendTelegramTestMessage, startTelegramCommandPolling, updateTelegramConfig } from "./notifier.js";
@@ -30,6 +31,8 @@ import {
   writeJson
 } from "./store.js";
 import { labelPolarity, predictPreference, trainModel } from "./trainingModel.js";
+import { installPlusRuntime } from "./plusRuntime.js";
+import { aggregateWatchedSearchDiagnostics, attachScrapeMetadataToSearchSummary } from "./serverSearchDiagnostics.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -54,17 +57,98 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+const [originalHandler] = server.listeners("request");
+const plusRuntime = installPlusRuntime({
+  server,
+  originalHandler,
+  buildListings,
+  coreHandleTelegramCommand: handleCoreTelegramCommand
+});
+const handleTelegramCommand = plusRuntime.handleTelegramCommand;
+let started = false;
+
+export { server, dailyDigest, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert };
+
+export function startServer() {
+  if (started) return server;
+  started = true;
   warnIfDashboardUnauthenticated();
   server.listen(port, () => {
     console.log(`Carousell Bot running at http://localhost:${port}`);
+    console.log("Unified routes enabled: core API, Plus dashboard API, exports, start URLs, scoped listings, and Telegram training");
   });
-  scheduler.start().catch((error) => console.warn(`Scheduler failed to start: ${error.message}`));
+  startOriginalScheduler().catch((error) => console.warn(`Scheduler failed to start: ${error.message}`));
   dailyDigest.start();
-  startTelegramCommandPolling(handleTelegramCommand).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
+  startTelegramCommandPolling(handleTelegramCommand, { onSettingsChanged: handleTelegramSettingsChanged }).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
+  return server;
 }
 
-export { server, dailyDigest, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert };
+if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  startServer();
+}
+
+async function startOriginalScheduler() {
+  const config = await readJson("config");
+  if (!config.scheduler?.enabled) return;
+  await configureOriginalScheduler(config);
+}
+
+async function handleTelegramSettingsChanged(config, previousConfig, change = {}) {
+  if (!change.scheduler) return;
+  await configureOriginalScheduler(config).catch((error) => {
+    console.warn(`Scheduler settings update failed: ${error.message}`);
+  });
+}
+
+async function configureOriginalScheduler(config) {
+  const schedulerConfig = config.scheduler || {};
+  await callOriginalJson("POST", "/api/scheduler", {
+    enabled: Boolean(schedulerConfig.enabled),
+    intervalMinutes: schedulerConfig.intervalMinutes || 30,
+    jitterSeconds: schedulerConfig.jitterSeconds || 45,
+    interWatchDelaySeconds: schedulerConfig.interWatchDelaySeconds || 0,
+    maxRunMinutes: schedulerConfig.maxRunMinutes || 30
+  });
+}
+
+async function callOriginalJson(method, url, body) {
+  return await new Promise((resolve, reject) => {
+    const chunks = [];
+    const request = Readable.from([Buffer.from(JSON.stringify(body || {}))]);
+    request.method = method;
+    request.url = url;
+    request.headers = { host: `localhost:${port}`, "content-type": "application/json", ...dashboardAuthHeaders() };
+
+    const response = {
+      headersSent: false,
+      statusCode: 200,
+      writeHead(status) {
+        this.headersSent = true;
+        this.statusCode = status;
+        return this;
+      },
+      write(chunk) {
+        chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+      },
+      end(chunk) {
+        try {
+          if (chunk) this.write(chunk);
+          const raw = Buffer.concat(chunks).toString("utf8");
+          if (this.statusCode >= 400) return reject(new Error(raw || `Original handler failed (${this.statusCode})`));
+          resolve(raw ? JSON.parse(raw) : {});
+        } catch (error) {
+          reject(error);
+        }
+      },
+      on(event, handler) {
+        if (event === "error") this._onError = handler;
+        return this;
+      }
+    };
+
+    Promise.resolve(originalHandler(request, response)).catch(reject);
+  });
+}
 
 async function handleApi(request, response, url) {
   if (request.method === "GET" && url.pathname === "/api/health") {
@@ -167,6 +251,18 @@ async function handleApi(request, response, url) {
       updated: webSearch?.updated || 0,
       hydration_job: webSearch?.job || null,
       warning: webSearch?.warning || null,
+      status: webSearch?.status ?? null,
+      ok: webSearch?.ok ?? null,
+      result_count: webSearch?.result_count ?? null,
+      result_count_valid: webSearch?.result_count_valid ?? false,
+      parser: webSearch?.parser ?? null,
+      anchors_found: webSearch?.anchors_found ?? null,
+      next_data_found: webSearch?.next_data_found ?? null,
+      challenge_detected: webSearch?.challenge_detected ?? false,
+      consent_page_detected: webSearch?.consent_page_detected ?? false,
+      diagnostic: webSearch?.diagnostic ?? null,
+      scrape_result: webSearch?.scrape_result ?? null,
+      scrape_results: webSearch?.scrape_results || [],
       results: buildListings(state, query, {
         minPrice: body.min_price ?? 1,
         maxPrice: body.max_price,
@@ -848,14 +944,15 @@ async function searchAndStoreWebResults(query, mode, options = {}) {
       job = startHydrationJob(hydrationCandidates, { query, mode, options });
     }
 
-    return {
+    return attachScrapeMetadataToSearchSummary({
       source: "carousell-web",
       url: webSearch.url,
       added: additions.length,
       updated,
       price_drops: priceDrops.length,
-      job
-    };
+      job,
+      scrape_results: Array.isArray(webSearch.scrape_results) ? webSearch.scrape_results : []
+    }, webSearch, { query });
   } catch (error) {
     error.message = `Web search failed: ${error.message}`;
     throw error;
@@ -876,6 +973,11 @@ async function runWatchedSearch(watch) {
     }
   }
   updateWatchedSearchRun(watch.id);
+  const diagnostics = aggregateWatchedSearchDiagnostics(results, {
+    query: watch.query,
+    watch_id: watch.id,
+    terms
+  });
   return {
     watch_id: watch.id,
     query: watch.query,
@@ -884,6 +986,8 @@ async function runWatchedSearch(watch) {
     added: results.reduce((total, item) => total + Number(item.added || 0), 0),
     updated: results.reduce((total, item) => total + Number(item.updated || 0), 0),
     price_drops: results.reduce((total, item) => total + Number(item.price_drops || 0), 0),
+    ...diagnostics,
+    scrape_results: diagnostics.scrape_results,
     jobs: results.map((item) => item.job).filter(Boolean)
   };
 }
@@ -1092,7 +1196,7 @@ function alertKey(input = {}) {
   ].join(":");
 }
 
-async function handleTelegramCommand(text) {
+async function handleCoreTelegramCommand(text) {
   if (typeof text === "object" && text?.type === "callback") {
     return handleTelegramCallback(text);
   }

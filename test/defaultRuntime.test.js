@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const serverPlusSource = await readFile(new URL("../src/server-plus.js", import.meta.url), "utf8");
 const serverUnifiedSource = await readFile(new URL("../src/server-unified.js", import.meta.url), "utf8");
+const serverSource = await readFile(new URL("../src/server.js", import.meta.url), "utf8");
 const plusRuntimeSource = await readFile(new URL("../src/plusRuntime.js", import.meta.url), "utf8");
 const carousellSearchSource = await readFile(new URL("../src/carousellSearch.js", import.meta.url), "utf8");
 const storeSource = await readFile(new URL("../src/store.js", import.meta.url), "utf8");
@@ -15,10 +16,10 @@ const refinedFeedbackSource = await readFile(new URL("../public/refined-feedback
 const notificationCss = await readFile(new URL("../public/notification-detail.css", import.meta.url), "utf8");
 
 test("default npm runtime uses unified server", () => {
-  assert.equal(packageJson.scripts.start, "node src/server-unified.js");
-  assert.equal(packageJson.scripts.dev, "node src/server-unified.js");
+  assert.equal(packageJson.scripts.start, "node src/server.js");
+  assert.equal(packageJson.scripts.dev, "node src/server.js");
   assert.equal(packageJson.scripts["start:core"], "node src/server.js");
-  assert.equal(packageJson.scripts["start:plus"], "node src/server-unified.js");
+  assert.equal(packageJson.scripts["start:plus"], "node src/server.js");
 });
 
 test("unified server entrypoint has valid syntax", () => {
@@ -33,7 +34,7 @@ test("plus server shim has valid syntax", () => {
     encoding: "utf8"
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(serverPlusSource, /\.\/server-unified\.js/);
+  assert.match(serverPlusSource, /\.\/server\.js/);
   assert.match(serverPlusSource, /startServer/);
 });
 
@@ -47,10 +48,18 @@ test("plus runtime installer has valid syntax", () => {
   assert.match(plusRuntimeSource, /searchDiagnosticsPayload/);
 });
 
-test("unified runtime installs plus routes and preserves scheduler replay", () => {
-  assert.match(serverUnifiedSource, /installPlusRuntime/);
-  assert.match(serverUnifiedSource, /callOriginalJson/);
-  assert.match(serverUnifiedSource, /dashboardAuthHeaders/);
+test("server.js installs unified plus runtime", () => {
+  assert.match(serverSource, /installPlusRuntime/);
+  assert.match(serverSource, /callOriginalJson/);
+  assert.match(serverSource, /dashboardAuthHeaders/);
+  assert.match(serverSource, /export function startServer/);
+});
+
+test("legacy unified and plus entrypoints are guarded shims", () => {
+  assert.match(serverUnifiedSource, /\.\/server\.js/);
+  assert.match(serverPlusSource, /\.\/server\.js/);
+  assert.match(serverUnifiedSource, /pathToFileURL/);
+  assert.match(serverPlusSource, /pathToFileURL/);
 });
 
 test("batch feature helper has valid syntax", () => {
