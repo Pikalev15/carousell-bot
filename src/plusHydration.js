@@ -5,6 +5,7 @@ const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
 const EXCLUDED_IMAGE_PATTERN = /(avatar|profile[-_]?(pic|photo|image)|user[-_]?icon|placeholder|sprite|favicon|\blogo\b|blank\.gif|1x1|loading[-_]?spinner|badge|star-rating|verified-icon)/i;
 
+let sharedBrowser = null;
 let sharedBrowserPromise = null;
 let cleanupHooksInstalled = false;
 
@@ -32,33 +33,39 @@ export async function hydrateCarousellListings(listings, options = {}) {
 }
 
 async function getSharedBrowser() {
-  if (sharedBrowserPromise) {
-    const existing = await sharedBrowserPromise.catch(() => null);
-    if (existing?.isConnected?.()) return existing;
-    sharedBrowserPromise = null;
-  }
+  if (sharedBrowser?.isConnected?.()) return sharedBrowser;
+  if (sharedBrowserPromise) return sharedBrowserPromise;
 
   sharedBrowserPromise = launchSharedBrowser();
   return sharedBrowserPromise;
 }
 
 async function launchSharedBrowser() {
-  const { chromium } = await importPlaywright();
-  const browser = await chromium.launch({
-    headless: true,
-    args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-  });
-  installCleanupHooks();
-  browser.on?.("disconnected", () => {
+  try {
+    const { chromium } = await importPlaywright();
+    const browser = await chromium.launch({
+      headless: true,
+      args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
+    });
+    sharedBrowser = browser;
+    installCleanupHooks();
+    browser.on?.("disconnected", () => {
+      if (sharedBrowser === browser) sharedBrowser = null;
+      if (sharedBrowserPromise) sharedBrowserPromise = null;
+    });
+    return browser;
+  } catch (error) {
+    sharedBrowser = null;
     sharedBrowserPromise = null;
-  });
-  return browser;
+    throw error;
+  }
 }
 
 async function closeSharedBrowser() {
   const browserPromise = sharedBrowserPromise;
+  const browser = sharedBrowser || await browserPromise?.catch(() => null);
+  sharedBrowser = null;
   sharedBrowserPromise = null;
-  const browser = await browserPromise?.catch(() => null);
   if (browser?.isConnected?.()) await browser.close().catch(() => {});
 }
 
