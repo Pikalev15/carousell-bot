@@ -53,19 +53,25 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
       const stored = upsertScrapedListing(rawListing);
       results.push(stored);
     }
-    scrapeResults.push(normalizeScrapeResult({
-      ...search,
+    const normalized = normalizeScrapeResult({
+      ...(search.scrape_result || search),
       query,
-      result_count: rawResults.length,
+      result_count: search.scrape_result?.result_count ?? search.result_count,
       added,
       updated,
       started_at: search.started_at || startedAt,
       finished_at: search.finished_at || new Date().toISOString(),
       duration_ms: search.duration_ms ?? Date.now() - startedMs
-    }));
+    });
+    scrapeResults.push(normalized);
   }
 
   if (added || updated) await writeJson("listings", nextListings);
+
+  const validCounts = scrapeResults.filter((item) => item.result_count_valid).map((item) => Number(item.result_count || 0));
+  const aggregateCount = scrapeResults.length && validCounts.length === scrapeResults.length
+    ? validCounts.reduce((total, count) => total + count, 0)
+    : null;
 
   return {
     source: "carousell-starturls",
@@ -74,7 +80,7 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
     parsed,
     status: scrapeResults.some((item) => !item.ok) ? "partial" : "success",
     ok: scrapeResults.every((item) => item.ok),
-    result_count: results.length,
+    result_count: aggregateCount,
     added,
     updated,
     scrape_results: scrapeResults,
