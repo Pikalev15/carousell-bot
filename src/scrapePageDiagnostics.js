@@ -48,9 +48,11 @@ export function buildPageSnapshot(input = {}) {
   const requestedUrl = String(input.requested_url ?? input.requestedUrl ?? "").trim();
   const anchorsFound = nullableCount(input.anchors_found ?? input.anchorsFound);
   const nextDataFound = input.next_data_found ?? input.nextDataFound;
+  const resolvedNextDataFound = nextDataFound === null || nextDataFound === undefined ? htmlHasNextData(html) : Boolean(nextDataFound);
   const expectedSearchStructure = input.expected_search_structure === undefined
     ? hasExpectedSearchStructure({ html, bodyText })
     : Boolean(input.expected_search_structure);
+  const validZeroResultHint = VALID_ZERO_PATTERNS.some((pattern) => pattern.test(`${title}\n${bodyText}`));
 
   return {
     requested_url: requestedUrl,
@@ -59,11 +61,11 @@ export function buildPageSnapshot(input = {}) {
     body_text_sample: bodyText.slice(0, 1000),
     html_length: nullableCount(input.html_length ?? input.htmlLength) ?? html.length,
     anchors_found: anchorsFound,
-    next_data_found: nextDataFound === null || nextDataFound === undefined ? htmlHasNextData(html) : Boolean(nextDataFound),
+    next_data_found: resolvedNextDataFound,
     expected_search_structure: expectedSearchStructure,
     redirected_away_from_search: detectSearchRedirect(requestedUrl, finalUrl),
-    suspiciously_empty: isSuspiciouslyEmpty({ html, bodyText }),
-    valid_zero_result_hint: VALID_ZERO_PATTERNS.some((pattern) => pattern.test(`${title}\n${bodyText}`))
+    suspiciously_empty: isSuspiciouslyEmpty({ html, bodyText }) && !expectedSearchStructure && !validZeroResultHint && !resolvedNextDataFound,
+    valid_zero_result_hint: validZeroResultHint
   };
 }
 
