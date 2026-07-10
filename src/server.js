@@ -6,6 +6,7 @@ import { classifyListing, scoreDeal } from "./filterEngine.js";
 import { extractLocation, hydrateCarousellListings, refreshCarousellListingDetails, searchCarousell } from "./carousellSearch.js";
 import { lookupMsrpFromGoogle } from "./msrpSearch.js";
 import { getCachedImage, proxiedImageUrl } from "./imageCache.js";
+import { authorizeDashboardRequest, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
 import { maskTelegramConfig, notifyAlert, parseTelegramCommand, sendTelegramTestMessage, startTelegramCommandPolling, updateTelegramConfig } from "./notifier.js";
 import { analyzeListingRelevance, inferPreciseCategory } from "./relevanceClassifier.js";
 import { SearchScheduler } from "./scheduler.js";
@@ -39,6 +40,7 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host}`);
 
     if (url.pathname.startsWith("/api/")) {
+      if (!authorizeDashboardRequest(request, response, url)) return;
       await handleApi(request, response, url);
       return;
     }
@@ -50,6 +52,7 @@ const server = http.createServer(async (request, response) => {
 });
 
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
+  warnIfDashboardUnauthenticated();
   server.listen(port, () => {
     console.log(`Carousell Bot running at http://localhost:${port}`);
   });
@@ -1286,11 +1289,21 @@ function formatMoney(value) {
 async function serveStatic(urlPath, response) {
   const safePath = urlPath === "/" ? "/index.html" : urlPath;
   const filePath = path.join(publicDir, safePath);
-  if (!filePath.startsWith(publicDir)) {
+  const relativePath = path.relative(publicDir, filePath);
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
     sendText(response, 403, "Forbidden");
     return;
   }
-  const content = await readFile(filePath);
+  let content;
+  try {
+    content = await readFile(filePath);
+  } catch (error) {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+      sendText(response, 404, "Not found");
+      return;
+    }
+    throw error;
+  }
   response.writeHead(200, { "content-type": contentType(filePath) });
   response.end(content);
 }

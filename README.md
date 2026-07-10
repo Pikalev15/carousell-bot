@@ -89,7 +89,7 @@ For LAN/NAS use, set a simple shared dashboard token:
 DASHBOARD_TOKEN=replace-with-a-long-random-string npm start
 ```
 
-Every `/api/*` route except `/api/health` requires this token when it is set. The browser dashboard prompts for the token once and stores it in `sessionStorage` for that tab/session.
+Every `/api/*` route except `/api/health` requires this token when it is set, including the default plus runtime and the core-only debug runtime. The browser dashboard prompts for the token once and stores it in `sessionStorage` for that tab/session.
 
 If `DASHBOARD_TOKEN` is not set, the server still starts for localhost-only development but logs a clear warning that API routes are unauthenticated.
 
@@ -174,7 +174,7 @@ npm run migrate
 npm start          # default full runtime: src/server-plus.js
 npm run dev        # same as npm start
 npm run start:plus # explicit alias for the default full runtime
-npm run start:core # core server only, mostly for debugging
+npm run start:core # core server only, mostly for debugging; honors DASHBOARD_TOKEN
 npm run clean:images
 npm run enrich:data
 npm run medians:default
