@@ -13,6 +13,7 @@ import { SCRAPE_STATUSES } from "../src/scrapeResult.js";
 
 test("detects challenge pages with multiple signals", () => {
   const snapshot = buildPageSnapshot({
+    requested_url: "https://www.carousell.sg/search/gpu",
     final_url: "https://www.carousell.sg/search/gpu",
     page_title: "Security check",
     body_text: "Please verify that you are not a robot. Unusual traffic detected.",
@@ -50,7 +51,7 @@ test("detects layout change when search structure is missing", () => {
     anchors_found: 0,
     next_data_found: false,
     expected_search_structure: false,
-    html: "<html><body>Welcome</body></html>"
+    html: "<html><body>Welcome to a new shell</body></html>"
   });
 
   assert.equal(detectLayoutChange(snapshot), true);
