@@ -59,7 +59,7 @@ export async function sendTelegramMessage(message, config = null, options = {}) 
   return { ok: true, payload };
 }
 
-export async function startTelegramCommandPolling(handleCommand) {
+export async function startTelegramCommandPolling(handleCommand, options = {}) {
   startTelegramDigestScheduler();
   let offset = 0;
   let stopped = false;
@@ -94,8 +94,9 @@ export async function startTelegramCommandPolling(handleCommand) {
             continue;
           }
           const parsed = parseTelegramCallbackData(callback.data);
+          const settingsContext = { chatId, config, onSettingsChanged: options.onSettingsChanged };
           const reply = parsed.kind === "settings"
-            ? await handleTelegramSettingsCallback(parsed, { chatId, config }).catch((error) => `Action failed: ${error.message}`)
+            ? await handleTelegramSettingsCallback(parsed, settingsContext).catch((error) => `Action failed: ${error.message}`)
             : await handleCommand({ ...parsed, type: "callback", id: callback.id, chatId, message: callback.message, data: callback.data }, { chatId, config }).catch((error) => `Action failed: ${error.message}`);
           if (reply && typeof reply === "object" && reply.message) {
             const result = await sendTelegramReply(reply, config, { chatId }).catch((error) => ({ ok: false, error: error.message }));
@@ -115,7 +116,7 @@ export async function startTelegramCommandPolling(handleCommand) {
           await sendTelegramMessage("Unauthorized chat. Configure this chat ID in Carousell Bot to use commands.", config, { chatId }).catch(() => {});
           continue;
         }
-        const settingsReply = await handleTelegramSettingsCommand(text, { chatId, config }).catch((error) => `Command failed: ${error.message}`);
+        const settingsReply = await handleTelegramSettingsCommand(text, { chatId, config, onSettingsChanged: options.onSettingsChanged }).catch((error) => `Command failed: ${error.message}`);
         const reply = settingsReply || await handleCommand(text, { chatId, message, config }).catch((error) => `Command failed: ${error.message}`);
         if (reply) await sendTelegramReply(reply, config, { chatId });
       }
@@ -146,8 +147,8 @@ export function parseTelegramCommand(text) {
 export function parseTelegramCallbackData(data) {
   const text = String(data || "");
   if (text.startsWith("tgset:")) {
-    const [, action = ""] = text.split(":");
-    return { kind: "settings", action, settingAction: action, listingId: 0 };
+    const [, action = "", ...values] = text.split(":");
+    return { kind: "settings", action, settingAction: action, value: values.join(":"), listingId: 0 };
   }
   const [prefix, action, listingId] = text.split(":");
   if (prefix !== "cb" || !action || !listingId) return { action: "", listingId: 0 };
@@ -334,23 +335,71 @@ export async function handleTelegramSettingsCallback(callback, context = {}) {
   const scheduler = config.scheduler || {};
   let next = config;
   let answer = "Settings updated";
+  let change = { action: callback.action };
+
+  if (callback.action === "noop") {
+    return "Use the +/- buttons or presets around that value.";
+  }
 
   if (callback.action === "enabled") {
     next = mergeTelegramAlertSettings(config, { enabled: !settings.enabled });
+    answer = `Alerts ${settings.enabled ? "disabled" : "enabled"}`;
   } else if (callback.action === "mode") {
     const modes = ["smart", "instant", "digest_only"];
     const mode = modes[(modes.indexOf(settings.mode) + 1) % modes.length];
     next = mergeTelegramAlertSettings(config, { mode });
+    answer = `Mode set to ${mode.replace("_", " ")}`;
   } else if (callback.action === "dnd") {
     next = mergeTelegramAlertSettings(config, { quietHours: { enabled: !settings.quietHours.enabled } });
+    answer = `DND ${settings.quietHours.enabled ? "disabled" : "enabled"}`;
+  } else if (callback.action === "dnd_default") {
+    next = mergeTelegramAlertSettings(config, { quietHours: { enabled: true, start: "23:00", end: "07:30" } });
+    answer = "DND set to 23:00–07:30";
   } else if (callback.action === "digest") {
     next = mergeTelegramAlertSettings(config, { digest: { enabled: !settings.digest.enabled } });
+    answer = `Digest ${settings.digest.enabled ? "disabled" : "enabled"}`;
+  } else if (callback.action === "digest_default") {
+    next = mergeTelegramAlertSettings(config, { digest: { enabled: true, time: "07:45" } });
+    answer = "Digest time set to 07:45";
+  } else if (callback.action === "urgent") {
+    next = mergeTelegramAlertSettings(config, { quietHours: { allowUrgentDeals: !settings.quietHours.allowUrgentDeals } });
+    answer = `Urgent DND bypass ${settings.quietHours.allowUrgentDeals ? "disabled" : "enabled"}`;
   } else if (callback.action === "threshold_down" || callback.action === "threshold_up") {
     const delta = callback.action.endsWith("up") ? 5 : -5;
-    next = mergeTelegramAlertSettings(config, { minInstantScore: clamp(Number(settings.minInstantScore) + delta, 0, 100) });
+    const minInstantScore = clamp(Number(settings.minInstantScore) + delta, 0, 100);
+    next = mergeTelegramAlertSettings(config, { minInstantScore });
+    answer = `Instant threshold set to ${minInstantScore}+`;
+  } else if (callback.action === "maxhour_down" || callback.action === "maxhour_up") {
+    const delta = callback.action.endsWith("up") ? 1 : -1;
+    const maxInstantPerHour = clamp(Number(settings.maxInstantPerHour) + delta, 0, 100);
+    next = mergeTelegramAlertSettings(config, { maxInstantPerHour });
+    answer = `Max instant alerts set to ${maxInstantPerHour === 0 ? "unlimited" : `${maxInstantPerHour}/hour`}`;
+  } else if (callback.action === "digest_score_down" || callback.action === "digest_score_up") {
+    const delta = callback.action.endsWith("up") ? 5 : -5;
+    const minScore = clamp(Number(settings.digest.minScore) + delta, 0, 100);
+    next = mergeTelegramAlertSettings(config, { digest: { minScore } });
+    answer = `Digest minimum score set to ${minScore}+`;
+  } else if (callback.action === "digest_top_down" || callback.action === "digest_top_up") {
+    const delta = callback.action.endsWith("up") ? 1 : -1;
+    const maxItems = clamp(Number(settings.digest.maxItems) + delta, 1, 30);
+    next = mergeTelegramAlertSettings(config, { digest: { maxItems } });
+    answer = `Digest size set to top ${maxItems}`;
+  } else if (callback.action === "urgent_threshold_down" || callback.action === "urgent_threshold_up") {
+    const delta = callback.action.endsWith("up") ? 5 : -5;
+    const urgentScoreThreshold = clamp(Number(settings.quietHours.urgentScoreThreshold) + delta, 0, 100);
+    next = mergeTelegramAlertSettings(config, { quietHours: { urgentScoreThreshold } });
+    answer = `Urgent bypass threshold set to ${urgentScoreThreshold}+`;
   } else if (callback.action === "interval_down" || callback.action === "interval_up") {
     const delta = callback.action.endsWith("up") ? 5 : -5;
-    next = { ...config, scheduler: { ...scheduler, intervalMinutes: clamp(Number(scheduler.intervalMinutes || 30) + delta, 5, 1440) } };
+    const intervalMinutes = clamp(Number(scheduler.intervalMinutes || 30) + delta, 5, 1440);
+    next = { ...config, scheduler: { ...scheduler, intervalMinutes } };
+    answer = `Search interval set to ${intervalMinutes} minutes`;
+    change = { ...change, scheduler: true, intervalMinutes };
+  } else if (callback.action === "interval_set") {
+    const intervalMinutes = clamp(Number(callback.value), 5, 1440);
+    next = { ...config, scheduler: { ...scheduler, intervalMinutes } };
+    answer = `Search interval set to ${intervalMinutes} minutes`;
+    change = { ...change, scheduler: true, intervalMinutes };
   } else if (callback.action === "digest_now") {
     const result = await sendQueuedTelegramDigest({ manual: true });
     answer = result.sent ? `Sent ${result.sent} digest listings` : result.reason || "No queued listings";
@@ -359,9 +408,7 @@ export async function handleTelegramSettingsCallback(callback, context = {}) {
     answer = "Unknown settings action";
   }
 
-  await writeJson("config", next);
-  rescheduleTelegramDigest();
-  return settingsReply(await readJson("config"), answer);
+  return commitTelegramSettingsChange(config, next, context, answer, change);
 }
 
 export async function sendQueuedTelegramDigest({ manual = false } = {}) {
@@ -445,21 +492,30 @@ async function applyTelegramSettingsArgs(args, context = {}) {
   const settings = telegramAlertSettings(config);
   let next = config;
   let message = "Settings updated";
+  let change = { action: subcommand };
 
   if (["on", "off"].includes(subcommand)) {
     next = mergeTelegramAlertSettings(config, { enabled: subcommand === "on" });
+    message = `Alerts ${subcommand === "on" ? "enabled" : "disabled"}`;
   } else if (subcommand === "mode") {
+    if (!parts[0]) return settingsReply(config, "Usage: /settings mode smart|instant|digest");
     const mode = normalizeMode(parts[0]);
     next = mergeTelegramAlertSettings(config, { mode });
     message = `Notification mode set to ${mode.replace("_", " ")}`;
   } else if (["dnd", "quiet", "quiet-hours"].includes(subcommand)) {
     if (["on", "off"].includes(parts[0]?.toLowerCase())) {
       next = mergeTelegramAlertSettings(config, { quietHours: { enabled: parts[0].toLowerCase() === "on" } });
-    } else {
+      message = `DND ${parts[0].toLowerCase() === "on" ? "enabled" : "disabled"}`;
+    } else if (!parts[0]) {
+      next = mergeTelegramAlertSettings(config, { quietHours: { enabled: !settings.quietHours.enabled } });
+      message = `DND ${settings.quietHours.enabled ? "disabled" : "enabled"}`;
+    } else if (isTimeValue(parts[0]) && isTimeValue(parts[1])) {
       const start = normalizeTime(parts[0], settings.quietHours.start);
       const end = normalizeTime(parts[1], settings.quietHours.end);
       next = mergeTelegramAlertSettings(config, { quietHours: { enabled: true, start, end } });
       message = `Quiet hours set to ${start}–${end}`;
+    } else {
+      return settingsReply(config, "Usage: /settings dnd on|off|23:00 07:30");
     }
   } else if (subcommand === "digest") {
     const first = parts[0]?.toLowerCase();
@@ -469,31 +525,51 @@ async function applyTelegramSettingsArgs(args, context = {}) {
     }
     if (["on", "off"].includes(first)) {
       next = mergeTelegramAlertSettings(config, { digest: { enabled: first === "on" } });
-    } else {
+      message = `Digest ${first === "on" ? "enabled" : "disabled"}`;
+    } else if (isTimeValue(parts[0])) {
       const time = normalizeTime(parts[0], settings.digest.time);
       next = mergeTelegramAlertSettings(config, { digest: { enabled: true, time } });
       message = `Digest time set to ${time}`;
+    } else {
+      return settingsReply(config, "Usage: /settings digest on|off|07:45|now");
     }
   } else if (["interval", "minutes"].includes(subcommand)) {
-    const intervalMinutes = clamp(Number(parts[0]), 5, 1440);
+    const intervalMinutes = numberSetting(parts[0], 5, 1440);
+    if (intervalMinutes === null) return settingsReply(config, "Usage: /settings interval 5|10|15|30|60");
     next = { ...config, scheduler: { ...(config.scheduler || {}), intervalMinutes } };
     message = `Search interval set to ${intervalMinutes} minutes`;
+    change = { ...change, scheduler: true, intervalMinutes };
   } else if (["threshold", "instant"].includes(subcommand)) {
-    const minInstantScore = clamp(Number(parts[0]), 0, 100);
+    const minInstantScore = numberSetting(parts[0], 0, 100);
+    if (minInstantScore === null) return settingsReply(config, "Usage: /settings threshold 75");
     next = mergeTelegramAlertSettings(config, { minInstantScore });
     message = `Instant threshold set to ${minInstantScore}+`;
   } else if (["minscore", "digestscore"].includes(subcommand)) {
-    const minScore = clamp(Number(parts[0]), 0, 100);
+    const minScore = numberSetting(parts[0], 0, 100);
+    if (minScore === null) return settingsReply(config, "Usage: /settings minscore 60");
     next = mergeTelegramAlertSettings(config, { digest: { minScore } });
     message = `Digest minimum score set to ${minScore}+`;
   } else if (["maxhour", "rate"].includes(subcommand)) {
-    const maxInstantPerHour = clamp(Number(parts[0]), 0, 100);
+    const maxInstantPerHour = numberSetting(parts[0], 0, 100);
+    if (maxInstantPerHour === null) return settingsReply(config, "Usage: /settings maxhour 5");
     next = mergeTelegramAlertSettings(config, { maxInstantPerHour });
-    message = `Max instant alerts set to ${maxInstantPerHour}/hour`;
+    message = `Max instant alerts set to ${maxInstantPerHour === 0 ? "unlimited" : `${maxInstantPerHour}/hour`}`;
   } else if (["top", "digesttop"].includes(subcommand)) {
-    const maxItems = clamp(Number(parts[0]), 1, 30);
+    const maxItems = numberSetting(parts[0], 1, 30);
+    if (maxItems === null) return settingsReply(config, "Usage: /settings top 10");
     next = mergeTelegramAlertSettings(config, { digest: { maxItems } });
     message = `Digest size set to top ${maxItems}`;
+  } else if (["urgent", "bypass"].includes(subcommand)) {
+    const first = parts[0]?.toLowerCase();
+    if (["on", "off"].includes(first)) {
+      next = mergeTelegramAlertSettings(config, { quietHours: { allowUrgentDeals: first === "on" } });
+      message = `Urgent DND bypass ${first === "on" ? "enabled" : "disabled"}`;
+    } else {
+      const urgentScoreThreshold = numberSetting(parts[0], 0, 100);
+      if (urgentScoreThreshold === null) return settingsReply(config, "Usage: /settings urgent on|off|95");
+      next = mergeTelegramAlertSettings(config, { quietHours: { allowUrgentDeals: true, urgentScoreThreshold } });
+      message = `Urgent DND bypass enabled at ${urgentScoreThreshold}+`;
+    }
   } else if (["block", "filter", "blacklist"].includes(subcommand)) {
     const added = await addBlacklistFilters(rest);
     return settingsReply(await readJson("config"), added ? `Added ${added} blocked keyword${added === 1 ? "" : "s"}.` : "No new filter keywords were added.");
@@ -501,9 +577,19 @@ async function applyTelegramSettingsArgs(args, context = {}) {
     return settingsReply(config, `Unknown setting: ${subcommand}`);
   }
 
+  return commitTelegramSettingsChange(config, next, context, message, change);
+}
+
+async function commitTelegramSettingsChange(previous, next, context = {}, message = "Settings updated", change = {}) {
   await writeJson("config", next);
   rescheduleTelegramDigest();
-  return settingsReply(await readJson("config"), message);
+  const saved = await readJson("config");
+  if (typeof context.onSettingsChanged === "function") {
+    await Promise.resolve(context.onSettingsChanged(saved, previous, change)).catch((error) => {
+      addActivity({ type: "settings_error", title: "Telegram settings hook failed", detail: error.message });
+    });
+  }
+  return settingsReply(saved, message);
 }
 
 function settingsReply(config, prefix = "") {
@@ -596,6 +682,17 @@ async function recordTelegramStatus(result) {
     }
   };
   await writeJson("config", next);
+}
+
+function isTimeValue(value) {
+  return /^([01]?\d|2[0-3]):([0-5]\d)$/.test(String(value || "").trim());
+}
+
+function numberSetting(value, min, max) {
+  if (value === undefined || value === null || value === "") return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return clamp(number, min, max);
 }
 
 function clamp(value, min, max) {
