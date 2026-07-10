@@ -29,7 +29,7 @@ export function startServer() {
   });
   startOriginalScheduler().catch((error) => console.warn(`Scheduler failed to start: ${error.message}`));
   dailyDigest.start();
-  startTelegramCommandPolling(handleTelegramCommand).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
+  startTelegramCommandPolling(handleTelegramCommand, { onSettingsChanged: handleTelegramSettingsChanged }).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
   return server;
 }
 
@@ -40,10 +40,24 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
 async function startOriginalScheduler() {
   const config = await readJson("config");
   if (!config.scheduler?.enabled) return;
+  await configureOriginalScheduler(config);
+}
+
+async function handleTelegramSettingsChanged(config, previousConfig, change = {}) {
+  if (!change.scheduler) return;
+  await configureOriginalScheduler(config).catch((error) => {
+    console.warn(`Scheduler settings update failed: ${error.message}`);
+  });
+}
+
+async function configureOriginalScheduler(config) {
+  const scheduler = config.scheduler || {};
   await callOriginalJson("POST", "/api/scheduler", {
-    enabled: true,
-    intervalMinutes: config.scheduler.intervalMinutes || 30,
-    jitterSeconds: config.scheduler.jitterSeconds || 45
+    enabled: Boolean(scheduler.enabled),
+    intervalMinutes: scheduler.intervalMinutes || 30,
+    jitterSeconds: scheduler.jitterSeconds || 45,
+    interWatchDelaySeconds: scheduler.interWatchDelaySeconds || 0,
+    maxRunMinutes: scheduler.maxRunMinutes || 30
   });
 }
 
