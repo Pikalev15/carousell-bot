@@ -38,6 +38,20 @@ test("formats rich telegram alert messages", () => {
   assert.match(message, /https:\/\/www\.carousell\.sg\/p\/test-123/);
 });
 
+test("formats scrape-health telegram alerts with visible body context", () => {
+  const message = formatAlertMessage({
+    type: "scrape_health",
+    title: "Scrape health: SSD",
+    watch_id: 3,
+    message: "⚠️ Scrape health warning\n\nWatch: SSD\nResults: 2\nPrevious healthy result count: 48"
+  });
+
+  assert.match(message, /Scrape health: SSD/);
+  assert.match(message, /Watch: SSD/);
+  assert.match(message, /Previous healthy result count: 48/);
+  assert.equal(alertInlineKeyboard({ type: "scrape_health", watch_id: 3 }), null);
+});
+
 test("builds inline action keyboard and parses callback data", () => {
   const keyboard = alertInlineKeyboard({
     listing_id: 42,
