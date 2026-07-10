@@ -4,6 +4,7 @@ import { getDigestEmailConfig, normalizeDigestSendTime, sendDigestEmail } from "
 import { renderTopDealsDigest } from "../services/digestRenderer.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SINGAPORE_OFFSET_MS = 8 * 60 * 60 * 1000;
 
 export class DailyDigestJob {
   constructor(options = {}) {
@@ -130,13 +131,17 @@ export function normalizeSendTime(value) {
 
 export function nextRunDate(now = new Date(), sendTime = "08:00") {
   const [hour, minute] = normalizeSendTime(sendTime).split(":").map(Number);
-  const next = new Date(now);
-  next.setHours(hour, minute, 0, 0);
-  if (next <= now) next.setTime(next.getTime() + DAY_MS);
-  return next;
+  const current = new Date(now);
+  const singaporeNow = new Date(current.getTime() + SINGAPORE_OFFSET_MS);
+  const year = singaporeNow.getUTCFullYear();
+  const month = singaporeNow.getUTCMonth();
+  const date = singaporeNow.getUTCDate();
+  let nextUtcMs = Date.UTC(year, month, date, hour, minute, 0, 0) - SINGAPORE_OFFSET_MS;
+  if (nextUtcMs <= current.getTime()) nextUtcMs += DAY_MS;
+  return new Date(nextUtcMs);
 }
 
 function localDateKey(value) {
-  const date = new Date(value);
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const singaporeDate = new Date(new Date(value).getTime() + SINGAPORE_OFFSET_MS);
+  return `${singaporeDate.getUTCFullYear()}-${String(singaporeDate.getUTCMonth() + 1).padStart(2, "0")}-${String(singaporeDate.getUTCDate()).padStart(2, "0")}`;
 }
