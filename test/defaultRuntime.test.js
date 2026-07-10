@@ -43,6 +43,13 @@ test("plus hydration helper has valid syntax", () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
+test("scrape page diagnostics helper has valid syntax", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/scrapePageDiagnostics.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
 test("refined feedback UI script has valid syntax", () => {
   const result = spawnSync(process.execPath, ["--check", "public/refined-feedback.js"], {
     encoding: "utf8"
