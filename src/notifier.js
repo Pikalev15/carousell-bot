@@ -280,6 +280,8 @@ export function formatAlertMessage(alert) {
     alert.market_rating ? `Market ${alert.market_rating}` : "",
     alert.reason || ""
   ].filter(Boolean);
+  const bodyMessage = alert.message && (!alert.listing_id || String(alert.type || "").startsWith("scrape_health")) ? `\n${String(alert.message).trim()}` : "";
   const description = alert.description ? `\n${String(alert.description).slice(0, 180)}` : "";
-  return `Carousell Bot ${type}: ${alert.title}\n${parts.join(" | ")}${description}${link}`.trim();
+  const details = parts.length ? `\n${parts.join(" | ")}` : "";
+  return `Carousell Bot ${type}: ${alert.title}${details}${bodyMessage}${description}${link}`.trim();
 }
