@@ -30,6 +30,13 @@
     "botToken": "",
     "chatId": ""
   },
+  "digestEmail": {
+    "enabled": true,
+    "gmailUser": "",
+    "gmailAppPassword": "",
+    "emailTo": "",
+    "sendTime": "08:00"
+  },
   "scheduler": {
     "enabled": false,
     "intervalMinutes": 30,

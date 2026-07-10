@@ -714,6 +714,14 @@ function withConfigDefaults(config) {
       enabled: false,
       ...config?.telegram
     },
+    digestEmail: {
+      enabled: true,
+      gmailUser: "",
+      gmailAppPassword: "",
+      emailTo: "",
+      sendTime: "08:00",
+      ...config?.digestEmail
+    },
     scheduler: {
       enabled: false,
       intervalMinutes: 30,

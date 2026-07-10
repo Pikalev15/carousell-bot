@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTopDealsBySearch, scoreListingForSearch } from "../src/services/dealScorer.js";
 import { renderTopDealsDigest } from "../src/services/digestRenderer.js";
+import { getDigestEmailConfig, maskDigestEmailConfig } from "../src/services/emailService.js";
 import { nextRunDate, normalizeSendTime } from "../src/jobs/dailyDigest.js";
 
 test("deal scorer selects recent matching listings and filters weak deals", () => {
@@ -105,4 +106,19 @@ test("daily digest send time parsing schedules next local run", () => {
   assert.equal(normalizeSendTime("nope"), "08:00");
   assert.equal(nextRunDate(new Date("2026-07-10T07:00:00+08:00"), "08:00").toISOString(), new Date("2026-07-10T08:00:00+08:00").toISOString());
   assert.equal(nextRunDate(new Date("2026-07-10T09:00:00+08:00"), "08:00").toISOString(), new Date("2026-07-11T08:00:00+08:00").toISOString());
+});
+
+test("digest email config prefers saved UI settings and masks app password", () => {
+  const config = getDigestEmailConfig(
+    { GMAIL_USER: "env@example.com", GMAIL_APP_PASSWORD: "env-pass", DIGEST_EMAIL_TO: "env-to@example.com" },
+    { gmailUser: "ui@example.com", gmailAppPassword: "abcd efgh ijkl mnop", emailTo: "me@example.com", sendTime: "9:05", enabled: true }
+  );
+  const masked = maskDigestEmailConfig({ gmailUser: "ui@example.com", gmailAppPassword: "abcd efgh ijkl mnop", emailTo: "me@example.com", sendTime: "9:05" }, {});
+
+  assert.equal(config.user, "ui@example.com");
+  assert.equal(config.to, "me@example.com");
+  assert.equal(config.sendTime, "09:05");
+  assert.equal(config.configured, true);
+  assert.equal(masked.gmailAppPasswordConfigured, true);
+  assert.equal(masked.gmailAppPasswordPreview, "abcd...mnop");
 });

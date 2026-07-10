@@ -126,6 +126,7 @@ export async function importBundle(bundle) {
     ...currentConfig,
     ...sanitizeConfigForImport(config),
     telegram: currentConfig.telegram,
+    digestEmail: currentConfig.digestEmail,
     scheduler: currentConfig.scheduler
   });
   return { imported: true, watchedSearches: watchedSearches.length, filters: filters.length };
@@ -184,12 +185,12 @@ function samePair(item, a, b) {
 }
 
 function sanitizeConfigForExport(config = {}) {
-  const { telegram, scheduler, ...rest } = config || {};
+  const { telegram, scheduler, digestEmail, ...rest } = config || {};
   return rest;
 }
 
 function sanitizeConfigForImport(config = {}) {
-  const { telegram, scheduler, ...rest } = config || {};
+  const { telegram, scheduler, digestEmail, ...rest } = config || {};
   return rest;
 }
 

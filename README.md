@@ -150,7 +150,17 @@ Do not commit real Telegram secrets. If a real Telegram bot token was ever commi
 
 The app can send a once-per-day HTML "Top Deals" digest through Gmail SMTP. It uses enabled watched searches, picks listings scraped in the last 24 hours, scores them with simple rules, and skips sending when there are no qualifying deals.
 
-Set these environment variables before starting the server:
+On your PC, open the dashboard Settings view and fill in **Email Digest**:
+
+- Gmail address
+- Gmail app password
+- Recipient email
+- Daily send time
+- Enabled / paused state
+
+Click **Save Digest**, then **Send test email** to verify SMTP before waiting for the daily schedule.
+
+You can also set these environment variables before starting the server:
 
 ```bash
 GMAIL_USER=your-address@gmail.com
@@ -160,7 +170,7 @@ DIGEST_SEND_TIME=08:00
 npm start
 ```
 
-`GMAIL_APP_PASSWORD` must be a Google App Password, not your normal Gmail password. `DIGEST_SEND_TIME` is local server time in `HH:mm` format and defaults to `08:00` if omitted or invalid.
+`GMAIL_APP_PASSWORD` must be a Google App Password, not your normal Gmail password. `DIGEST_SEND_TIME` is local server time in `HH:mm` format and defaults to `08:00` if omitted or invalid. Dashboard settings are stored locally in `data/config.json`; environment variables are used as a fallback when local digest fields are blank.
 
 The MVP digest is intentionally rule-based: price, saved-search keyword match, freshness, duplicate filtering, and bad-keyword penalties. It does not use AI summaries or Gmail API access.
 
@@ -170,7 +180,7 @@ Local mutable state lives under `data/`, including config, labels, search histor
 
 Committed seed/template files:
 
-- `data/config.example.json` — safe config template with empty Telegram values
+- `data/config.example.json` — safe config template with empty Telegram and email digest values
 - `data/listings.json` — intentional mock/demo listing seed data, not real scraped data
 - `data/filters.json` — default phrase-filter seed data
 - `data/seller-blacklist.json` — default mock seller-block seed data

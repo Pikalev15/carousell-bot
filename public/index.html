@@ -254,6 +254,22 @@
             <div id="telegram-status" class="training-stats"></div>
             <button id="telegram-test" type="button">Send test message</button>
           </div>
+          <h3>Email Digest</h3>
+          <form id="digest-email-form" class="form-row">
+            <input name="gmailUser" type="email" placeholder="Gmail address" autocomplete="username" aria-label="Gmail address">
+            <input name="gmailAppPassword" type="password" placeholder="Gmail app password" autocomplete="new-password" aria-label="Gmail app password">
+            <input name="emailTo" type="email" placeholder="Send digest to" autocomplete="email" aria-label="Digest recipient email">
+            <input name="sendTime" type="time" value="08:00" aria-label="Digest send time">
+            <select name="enabled" aria-label="Email digest enabled">
+              <option value="true">Enabled</option>
+              <option value="false">Paused</option>
+            </select>
+            <button>Save Digest</button>
+          </form>
+          <div class="training-panel">
+            <div id="digest-email-status" class="training-stats"></div>
+            <button id="digest-email-test" type="button">Send test email</button>
+          </div>
           <h3>Blocked Sellers</h3>
           <div id="sellers" class="table"></div>
         </section>

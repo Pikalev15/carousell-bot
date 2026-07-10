@@ -24,7 +24,7 @@ const API_TIMEOUT_MS = 15000;
 // network idle, and hydrate several listing detail pages before responding — this
 // routinely takes well over 15s, so they get a much longer budget than everything else.
 const SLOW_ENDPOINT_TIMEOUT_MS = 120000;
-const SLOW_ENDPOINT_PATTERNS = [/^\/api\/search$/, /^\/api\/listings\/[^/]+\/refresh-details$/, /^\/api\/scheduler\/run$/];
+const SLOW_ENDPOINT_PATTERNS = [/^\/api\/search$/, /^\/api\/listings\/[^/]+\/refresh-details$/, /^\/api\/scheduler\/run$/, /^\/api\/digest\/test$/];
 
 function timeoutForPath(path) {
   return SLOW_ENDPOINT_PATTERNS.some((pattern) => pattern.test(path)) ? SLOW_ENDPOINT_TIMEOUT_MS : API_TIMEOUT_MS;
@@ -242,6 +242,38 @@ document.getElementById("telegram-test").addEventListener("click", async (event)
     resetButtonBusy(button);
   }
 });
+document.getElementById("digest-email-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  try {
+    const form = new FormData(formElement);
+    await api.post("/api/config/digest-email", {
+      gmailUser: form.get("gmailUser"),
+      gmailAppPassword: form.get("gmailAppPassword"),
+      emailTo: form.get("emailTo"),
+      sendTime: form.get("sendTime"),
+      enabled: form.get("enabled") === "true"
+    });
+    formElement.elements.gmailAppPassword.value = "";
+    await load();
+    showToast("Email digest settings saved");
+  } catch (error) {
+    showToast(`Email digest settings failed: ${digestEndpointError(error)}`, "error");
+  }
+});
+document.getElementById("digest-email-test").addEventListener("click", async (event) => {
+  const button = event.currentTarget;
+  setButtonBusy(button);
+  try {
+    const result = await api.post("/api/digest/test", {});
+    await load();
+    showToast(result.ok ? "Digest test email sent" : result.error || result.reason || "Digest email not configured", result.ok ? "success" : "error");
+  } catch (error) {
+    showToast(`Digest test failed: ${digestEndpointError(error)}`, "error");
+  } finally {
+    resetButtonBusy(button);
+  }
+});
 
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
@@ -417,6 +449,7 @@ function renderAll() {
   renderActivity();
   renderScheduler();
   renderTelegram();
+  renderDigestEmail();
 }
 
 async function runSearch(mode) {
@@ -715,6 +748,49 @@ function renderTelegram() {
     <div><span class="meta">Notifications</span><strong>${telegram.enabled ? "Enabled" : "Paused"}</strong></div>
     <div><span class="meta">Verified</span><strong>${telegram.verifiedAt ? formatDateTime(telegram.verifiedAt) : "Not yet"}</strong></div>
     ${error}
+  `;
+}
+
+function renderDigestEmail() {
+  const digest = state.config.digestEmail || {};
+  const form = document.getElementById("digest-email-form");
+  if (form) {
+    form.elements.gmailUser.value = digest.gmailUser || "";
+    form.elements.emailTo.value = digest.emailTo || "";
+    form.elements.sendTime.value = digest.sendTime || "08:00";
+    form.elements.enabled.value = digest.enabled === false ? "false" : "true";
+  }
+  const status = digest.configured ? (digest.enabled === false ? "paused" : "ready") : "missing";
+  const statusLabel = status === "ready" ? "Ready" : status === "paused" ? "Paused" : "Not configured";
+  const missing = Array.isArray(digest.missing) && digest.missing.length ? `<div class="telegram-error"><span class="meta">Missing</span><strong>${escapeHtml(digest.missing.join(", "))}</strong></div>` : "";
+  document.getElementById("digest-email-status").innerHTML = `
+    <div class="telegram-credentials ${escapeHtml(status === "ready" ? "verified" : status === "paused" ? "saved" : "error")}">
+      <div class="credential-header">
+        <span class="meta">Gmail SMTP</span>
+        <span class="badge ${status === "ready" ? "good" : status === "paused" ? "info" : "bad"}">${escapeHtml(statusLabel)}</span>
+      </div>
+      <div class="credential-grid">
+        <div class="credential-line">
+          <span class="credential-icon" aria-hidden="true">GM</span>
+          <div><span class="meta">Gmail user</span><strong>${escapeHtml(digest.gmailUser || "Missing")}</strong></div>
+        </div>
+        <div class="credential-line">
+          <span class="credential-icon" aria-hidden="true">KEY</span>
+          <div><span class="meta">App password</span><strong>${escapeHtml(digest.gmailAppPasswordPreview || "Missing")}</strong></div>
+        </div>
+        <div class="credential-line">
+          <span class="credential-icon" aria-hidden="true">TO</span>
+          <div><span class="meta">Recipient</span><strong>${escapeHtml(digest.emailTo || "Missing")}</strong></div>
+        </div>
+        <div class="credential-line">
+          <span class="credential-icon" aria-hidden="true">AT</span>
+          <div><span class="meta">Daily send time</span><strong>${escapeHtml(digest.sendTime || "08:00")}</strong></div>
+        </div>
+      </div>
+    </div>
+    <div><span class="meta">Source</span><strong>${escapeHtml(digest.source || "local config")}</strong></div>
+    <div><span class="meta">Sends when</span><strong>Enabled searches have qualifying 24h deals</strong></div>
+    ${missing}
   `;
 }
 
@@ -1099,6 +1175,10 @@ async function checkedJson(response) {
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || "Request failed");
   return payload;
+}
+
+function digestEndpointError(error) {
+  return error.message === "Not found" ? "server needs a restart to load the new email digest routes" : error.message;
 }
 
 async function request(path, options = {}) {

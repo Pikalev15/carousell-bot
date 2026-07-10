@@ -8,6 +8,7 @@ import { lookupMsrpFromGoogle } from "./msrpSearch.js";
 import { getCachedImage, proxiedImageUrl } from "./imageCache.js";
 import { authorizeDashboardRequest, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
 import { createDailyDigestJob } from "./jobs/dailyDigest.js";
+import { getDigestEmailConfig, maskDigestEmailConfig, sendDigestTestEmail } from "./services/emailService.js";
 import { maskTelegramConfig, notifyAlert, parseTelegramCommand, sendTelegramTestMessage, startTelegramCommandPolling, updateTelegramConfig } from "./notifier.js";
 import { analyzeListingRelevance, inferPreciseCategory } from "./relevanceClassifier.js";
 import { SearchScheduler } from "./scheduler.js";
@@ -63,7 +64,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
   startTelegramCommandPolling(handleTelegramCommand).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
 }
 
-export { server, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert };
+export { server, dailyDigest, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert };
 
 async function handleApi(request, response, url) {
   if (request.method === "GET" && url.pathname === "/api/health") {
@@ -366,7 +367,8 @@ async function handleApi(request, response, url) {
     const config = await readJson("config");
     sendJson(response, 200, {
       ...config,
-      telegram: maskTelegramConfig(config.telegram)
+      telegram: maskTelegramConfig(config.telegram),
+      digestEmail: maskDigestEmailConfig(config.digestEmail)
     });
     return;
   }
@@ -388,6 +390,16 @@ async function handleApi(request, response, url) {
 
   if (request.method === "POST" && url.pathname === "/api/config/telegram") {
     sendJson(response, 200, await updateTelegramConfig(await readBody(request)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/config/digest-email") {
+    sendJson(response, 200, await updateDigestEmailConfig(await readBody(request)));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/digest/test") {
+    sendJson(response, 200, await sendDigestTestMessage());
     return;
   }
 
@@ -679,6 +691,42 @@ async function retrainPreferenceModel() {
   const model = trainModel(listings, labels);
   await writeJson("trainingModel", model);
   return model;
+}
+
+async function updateDigestEmailConfig(input) {
+  const config = await readJson("config");
+  const current = config.digestEmail || {};
+  const passwordInput = input.gmailAppPassword ?? input.gmail_app_password;
+  const next = {
+    ...config,
+    digestEmail: {
+      ...current,
+      enabled: input.enabled === undefined ? current.enabled ?? false : Boolean(input.enabled),
+      gmailUser: String(input.gmailUser ?? input.gmail_user ?? current.gmailUser ?? "").trim(),
+      gmailAppPassword: String(passwordInput ?? "").trim() || current.gmailAppPassword || "",
+      emailTo: String(input.emailTo ?? input.email_to ?? current.emailTo ?? "").trim(),
+      sendTime: normalizeDigestTime(input.sendTime ?? input.send_time ?? current.sendTime)
+    }
+  };
+  await writeJson("config", next);
+  dailyDigest.start();
+  return maskDigestEmailConfig(next.digestEmail);
+}
+
+async function sendDigestTestMessage() {
+  const config = await readJson("config");
+  const digestConfig = getDigestEmailConfig(process.env, config.digestEmail);
+  if (!digestConfig.configured) {
+    return { ok: false, skipped: true, reason: `Digest email is not configured. Missing: ${digestConfig.missing.join(", ")}` };
+  }
+  const result = await sendDigestTestEmail({ config: digestConfig }).then((payload) => ({ ok: true, payload })).catch((error) => ({ ok: false, error: error.message }));
+  return result;
+}
+
+function normalizeDigestTime(value) {
+  const text = String(value || "08:00").trim();
+  const match = text.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+  return match ? `${match[1].padStart(2, "0")}:${match[2]}` : "08:00";
 }
 
 function applyTrainingOverrides(classification, label, prediction, model) {

@@ -4,8 +4,7 @@ import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthe
 import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
 import { scoreDeal } from "./filterEngine.js";
-import { createDailyDigestJob } from "./jobs/dailyDigest.js";
-import { buildListings, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
+import { buildListings, dailyDigest, handleTelegramCommand as coreHandleTelegramCommand, server } from "./server.js";
 import { hydrateCarousellListings } from "./plusHydration.js";
 import { getAlerts, getPriceHistory, getState, markAlertsRead, readJson, writeJson } from "./store.js";
 import { startTelegramCommandPolling } from "./notifier.js";
@@ -26,7 +25,6 @@ import {
 const port = Number(process.env.PORT || 3000);
 const [originalHandler] = server.listeners("request");
 const plusSearchJobs = new Map();
-const dailyDigest = createDailyDigestJob();
 
 server.removeAllListeners("request");
 server.on("request", async (request, response) => {

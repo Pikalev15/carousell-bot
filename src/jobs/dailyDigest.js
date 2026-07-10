@@ -1,10 +1,9 @@
 import { addActivity, getWatchedSearches, readJson } from "../store.js";
 import { buildTopDealsBySearch } from "../services/dealScorer.js";
-import { getDigestEmailConfig, sendDigestEmail } from "../services/emailService.js";
+import { getDigestEmailConfig, normalizeDigestSendTime, sendDigestEmail } from "../services/emailService.js";
 import { renderTopDealsDigest } from "../services/digestRenderer.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const DEFAULT_SEND_TIME = "08:00";
 
 export class DailyDigestJob {
   constructor(options = {}) {
@@ -18,7 +17,7 @@ export class DailyDigestJob {
 
   start() {
     this.stop();
-    this.scheduleNext();
+    this.scheduleNext().catch((error) => this.logger.error?.(`[dailyDigest] Could not schedule digest: ${error.message}`));
     return this.status();
   }
 
@@ -52,8 +51,9 @@ export class DailyDigestJob {
     }
   }
 
-  scheduleNext(now = new Date()) {
-    const sendTime = normalizeSendTime(this.env.DIGEST_SEND_TIME);
+  async scheduleNext(now = new Date()) {
+    const appConfig = await readJson("config").catch(() => ({}));
+    const sendTime = normalizeSendTime(appConfig.digestEmail?.sendTime || this.env.DIGEST_SEND_TIME);
     const next = nextRunDate(now, sendTime);
     this.nextRunAt = next.toISOString();
     const delayMs = Math.max(1000, next.getTime() - new Date(now).getTime());
@@ -62,7 +62,7 @@ export class DailyDigestJob {
         .catch((error) => {
           this.logger.error?.(`[dailyDigest] Failed: ${error.message}`);
         })
-        .finally(() => this.scheduleNext(new Date(Date.now() + 1000)));
+        .finally(() => this.scheduleNext(new Date(Date.now() + 1000)).catch((error) => this.logger.error?.(`[dailyDigest] Could not reschedule digest: ${error.message}`)));
     }, delayMs);
     this.timer.unref?.();
   }
@@ -73,17 +73,21 @@ export function createDailyDigestJob(options = {}) {
 }
 
 export async function runDailyDigest({ now = new Date(), env = process.env, logger = console, sendEmail = sendDigestEmail } = {}) {
-  const emailConfig = getDigestEmailConfig(env);
+  const appConfig = await readJson("config");
+  const emailConfig = getDigestEmailConfig(env, appConfig.digestEmail);
+  if (!emailConfig.enabled) {
+    logger.info?.("[dailyDigest] Email digest is paused; skipping.");
+    return { skipped: true, reason: "Email digest is paused" };
+  }
   if (!emailConfig.configured) {
     const reason = `Missing ${emailConfig.missing.join(", ")}`;
     logger.warn?.(`[dailyDigest] Skipping email digest. ${reason}.`);
     return { skipped: true, reason };
   }
 
-  const [listings, filters, appConfig, watchedSearches] = await Promise.all([
+  const [listings, filters, watchedSearches] = await Promise.all([
     readJson("listings"),
     readJson("filters"),
-    readJson("config"),
     getWatchedSearches()
   ]);
   const enabledSearches = watchedSearches.filter((search) => search.active !== false);
@@ -121,12 +125,10 @@ export async function runDailyDigest({ now = new Date(), env = process.env, logg
 }
 
 export function normalizeSendTime(value) {
-  const text = String(value || DEFAULT_SEND_TIME).trim();
-  const match = text.match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
-  return match ? `${match[1].padStart(2, "0")}:${match[2]}` : DEFAULT_SEND_TIME;
+  return normalizeDigestSendTime(value);
 }
 
-export function nextRunDate(now = new Date(), sendTime = DEFAULT_SEND_TIME) {
+export function nextRunDate(now = new Date(), sendTime = "08:00") {
   const [hour, minute] = normalizeSendTime(sendTime).split(":").map(Number);
   const next = new Date(now);
   next.setHours(hour, minute, 0, 0);
