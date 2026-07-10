@@ -30,6 +30,10 @@ import {
   writeJson
 } from "./store.js";
 import { labelPolarity, predictPreference, trainModel } from "./trainingModel.js";
+import {
+  aggregateWatchedSearchDiagnostics,
+  attachScrapeMetadataToSearchSummary
+} from "./serverSearchDiagnostics.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -167,6 +171,18 @@ async function handleApi(request, response, url) {
       updated: webSearch?.updated || 0,
       hydration_job: webSearch?.job || null,
       warning: webSearch?.warning || null,
+      status: webSearch?.status ?? null,
+      ok: webSearch?.ok ?? null,
+      result_count: webSearch?.result_count ?? null,
+      result_count_valid: webSearch?.result_count_valid ?? false,
+      parser: webSearch?.parser ?? null,
+      anchors_found: webSearch?.anchors_found ?? null,
+      next_data_found: webSearch?.next_data_found ?? null,
+      challenge_detected: webSearch?.challenge_detected ?? false,
+      consent_page_detected: webSearch?.consent_page_detected ?? false,
+      diagnostic: webSearch?.diagnostic ?? null,
+      scrape_result: webSearch?.scrape_result ?? null,
+      scrape_results: webSearch?.scrape_results || [],
       results: buildListings(state, query, {
         minPrice: body.min_price ?? 1,
         maxPrice: body.max_price,
@@ -848,14 +864,15 @@ async function searchAndStoreWebResults(query, mode, options = {}) {
       job = startHydrationJob(hydrationCandidates, { query, mode, options });
     }
 
-    return {
+    return attachScrapeMetadataToSearchSummary({
       source: "carousell-web",
       url: webSearch.url,
       added: additions.length,
       updated,
       price_drops: priceDrops.length,
-      job
-    };
+      job,
+      scrape_results: Array.isArray(webSearch.scrape_results) ? webSearch.scrape_results : []
+    }, webSearch, { query });
   } catch (error) {
     error.message = `Web search failed: ${error.message}`;
     throw error;
@@ -876,6 +893,11 @@ async function runWatchedSearch(watch) {
     }
   }
   updateWatchedSearchRun(watch.id);
+  const diagnostics = aggregateWatchedSearchDiagnostics(results, {
+    query: watch.query,
+    watch_id: watch.id,
+    terms
+  });
   return {
     watch_id: watch.id,
     query: watch.query,
@@ -884,6 +906,8 @@ async function runWatchedSearch(watch) {
     added: results.reduce((total, item) => total + Number(item.added || 0), 0),
     updated: results.reduce((total, item) => total + Number(item.updated || 0), 0),
     price_drops: results.reduce((total, item) => total + Number(item.price_drops || 0), 0),
+    ...diagnostics,
+    scrape_results: diagnostics.scrape_results,
     jobs: results.map((item) => item.job).filter(Boolean)
   };
 }
