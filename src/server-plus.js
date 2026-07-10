@@ -1,3 +1,4 @@
+import { performance } from "node:perf_hooks";
 import { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
@@ -25,6 +26,9 @@ import {
 const port = Number(process.env.PORT || 3000);
 const [originalHandler] = server.listeners("request");
 const plusSearchJobs = new Map();
+const scopedListingsCache = new Map();
+const SCOPED_LISTINGS_CACHE_MAX = Math.max(5, Number(process.env.LISTINGS_CACHE_MAX || 40));
+const PERF_LOG_ENABLED = /^(1|true|yes)$/i.test(String(process.env.PERF_LOG || ""));
 
 server.removeAllListeners("request");
 server.on("request", async (request, response) => {
@@ -77,15 +81,15 @@ server.on("request", async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/listings") {
-      const state = await getState();
-      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), filterOptions(url)), state.config);
+      const state = await timed("getState:/api/listings", () => getState());
+      const listings = cachedScopedListings(state, url.searchParams.get("q"), filterOptions(url));
       sendJson(response, 200, listings);
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/api/deals") {
-      const state = await getState();
-      const deals = scopedListings(buildListings(state), state.config)
+      const state = await timed("getState:/api/deals", () => getState());
+      const deals = cachedScopedListings(state)
         .filter((listing) => !listing.classification.is_filtered)
         .filter((listing) => listing.score.is_deal);
       sendJson(response, 200, deals);
@@ -93,15 +97,15 @@ server.on("request", async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/export/listings.csv") {
-      const state = await getState();
-      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), filterOptions(url)), state.config).map(flattenListingForExport);
+      const state = await timed("getState:/api/export/listings.csv", () => getState());
+      const listings = cachedScopedListings(state, url.searchParams.get("q"), filterOptions(url)).map(flattenListingForExport);
       sendCsv(response, "carousell-listings.csv", toCsv(listings));
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/api/export/deals.csv") {
-      const state = await getState();
-      const deals = scopedListings(buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: false }), state.config)
+      const state = await timed("getState:/api/export/deals.csv", () => getState());
+      const deals = cachedScopedListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: false })
         .filter((listing) => !listing.classification?.is_filtered)
         .filter((listing) => listing.score?.is_deal)
         .map(flattenListingForExport);
@@ -120,8 +124,8 @@ server.on("request", async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/export/price-history.csv") {
-      const state = await getState();
-      const listings = scopedListings(buildListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: true }), state.config);
+      const state = await timed("getState:/api/export/price-history.csv", () => getState());
+      const listings = cachedScopedListings(state, url.searchParams.get("q"), { ...filterOptions(url), includeFiltered: true });
       const rows = [];
       for (const listing of listings) {
         for (const item of await getMergedPriceHistory(listing.id)) {
@@ -175,7 +179,7 @@ server.on("request", async (request, response) => {
         anchorLimit: nextBody.mode === "more" || body.mode === "more" ? 500 : 240,
         hydrateDetails: false
       });
-      const state = await getState();
+      const state = await timed("getState:/api/search", () => getState());
       const resultQuery = query || search.parsed?.primary?.query || "";
       const hydrationJob = createHydrationJob(search.results || [], resultQuery);
       sendJson(response, 200, {
@@ -188,13 +192,13 @@ server.on("request", async (request, response) => {
         updated: search.updated,
         hydration_job: hydrationJob,
         warning: null,
-        results: scopedListings(buildListings(state, resultQuery, {
+        results: cachedScopedListings(state, resultQuery, {
           minPrice: nextBody.min_price ?? body.min_price ?? 1,
           maxPrice: nextBody.max_price ?? body.max_price,
           maxAgeHours: nextBody.max_age_hours ?? body.max_age_hours,
           location: nextBody.location ?? body.location,
           includeFiltered: Boolean(nextBody.include_filtered ?? body.include_filtered ?? true)
-        }), state.config),
+        }),
         history: state.searches || []
       });
       return;
@@ -269,7 +273,7 @@ async function hydratePlusListings(jobId, listings) {
     const current = plusSearchJobs.get(jobId);
     if (!current || current.status === "failed") return;
     const batch = listings.slice(index, index + batchSize);
-    const hydrated = await hydrateCarousellListings(batch, { concurrency: 2, jitterMs: 400 });
+    const hydrated = await timed(`hydratePlusListings:${batch.length}`, () => hydrateCarousellListings(batch, { concurrency: 2, jitterMs: 400 }));
     await mergeHydratedListings(hydrated);
     plusSearchJobs.set(jobId, {
       ...current,
@@ -304,13 +308,98 @@ async function mergeHydratedListings(hydratedListings) {
     });
     changed = true;
   }
-  if (changed) await writeJson("listings", current);
+  if (changed) {
+    await writeJson("listings", current);
+    clearScopedListingsCache();
+  }
 }
 
 function preferHydratedImages(detailImages = [], shallowImages = []) {
   const detail = (detailImages || []).filter(Boolean);
   const shallow = (shallowImages || []).filter(Boolean);
   return [...new Set([...detail, ...shallow])];
+}
+
+function cachedScopedListings(state, query = "", options = {}) {
+  const key = scopedListingsCacheKey(state, query, options);
+  const cached = scopedListingsCache.get(key);
+  if (cached) return cached;
+
+  const started = performance.now();
+  const listings = scopedListings(buildListings(state, query, options), state.config);
+  if (scopedListingsCache.size >= SCOPED_LISTINGS_CACHE_MAX) {
+    const oldestKey = scopedListingsCache.keys().next().value;
+    if (oldestKey) scopedListingsCache.delete(oldestKey);
+  }
+  scopedListingsCache.set(key, listings);
+  logPerf("build+scope listings", started, `${listings.length} returned, cache size ${scopedListingsCache.size}`);
+  return listings;
+}
+
+function scopedListingsCacheKey(state, query, options) {
+  return `${stateFingerprint(state)}|${filterFingerprint(query, options)}`;
+}
+
+function stateFingerprint(state = {}) {
+  const listings = Array.isArray(state.listings) ? state.listings : [];
+  let latestId = 0;
+  let latestTimestamp = "";
+  let priceHash = 0;
+
+  for (const listing of listings) {
+    const id = Number(listing.id || 0);
+    const price = Math.round(Number(listing.current_price || 0));
+    const timestamp = latestListingTimestamp(listing);
+    if (id > latestId) latestId = id;
+    if (timestamp > latestTimestamp) latestTimestamp = timestamp;
+    priceHash = (priceHash + ((id * 31 + price) % 1_000_003)) % 1_000_003;
+  }
+
+  return [
+    listings.length,
+    latestId,
+    latestTimestamp,
+    priceHash,
+    Array.isArray(state.filters) ? state.filters.length : 0,
+    Array.isArray(state.sellers) ? state.sellers.length : 0,
+    hashValue(state.labels || []),
+    hashValue(state.config || {}),
+    hashValue(state.trainingModel || {})
+  ].join(":");
+}
+
+function latestListingTimestamp(listing = {}) {
+  return firstIsoTimestamp(listing.scraped_at)
+    || firstIsoTimestamp(listing.details_scraped_at)
+    || firstIsoTimestamp(listing.updated_at)
+    || firstIsoTimestamp(listing.listed_at);
+}
+
+function firstIsoTimestamp(value) {
+  const text = String(value || "");
+  return /^\d{4}-\d{2}-\d{2}T/.test(text) ? text : "";
+}
+
+function filterFingerprint(query, options = {}) {
+  return JSON.stringify({
+    q: String(query || "").trim().toLowerCase(),
+    minPrice: options.minPrice ?? "",
+    maxPrice: options.maxPrice ?? "",
+    maxAgeHours: options.maxAgeHours ?? "",
+    location: String(options.location || "").trim().toLowerCase(),
+    includeFiltered: Boolean(options.includeFiltered)
+  });
+}
+
+function hashValue(value) {
+  const text = JSON.stringify(value ?? null);
+  let hash = 0;
+  for (const char of text) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return hash.toString(36);
+}
+
+function clearScopedListingsCache() {
+  scopedListingsCache.clear();
 }
 
 function scopedListings(listings, config = {}) {
@@ -382,6 +471,21 @@ async function readRequestBody(request) {
   for await (const chunk of request) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
   const raw = Buffer.concat(chunks).toString("utf8");
   return raw ? JSON.parse(raw) : {};
+}
+
+async function timed(label, fn) {
+  const started = performance.now();
+  try {
+    return await fn();
+  } finally {
+    logPerf(label, started);
+  }
+}
+
+function logPerf(label, started, detail = "") {
+  if (!PERF_LOG_ENABLED) return;
+  const ms = (performance.now() - started).toFixed(1);
+  console.log(`[perf] ${label}: ${ms}ms${detail ? ` (${detail})` : ""}`);
 }
 
 function sendCsv(response, filename, csv) {
