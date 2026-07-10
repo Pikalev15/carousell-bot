@@ -1,5 +1,6 @@
 import { hydrateCarousellListings, searchCarousell } from "./carousellSearch.js";
 import { enrichListingData, parseStartUrls } from "./listingDataQuality.js";
+import { normalizeScrapeResult } from "./scrapeResult.js";
 import { readJson, writeJson } from "./store.js";
 
 export async function searchAndStoreStartUrls(body = {}, options = {}) {
@@ -11,6 +12,7 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
   const existingByCarousellId = new Map(existingListings.map((listing, index) => [listing.carousell_id, { listing, index }]));
   const nextListings = [...existingListings];
   const results = [];
+  const scrapeResults = [];
   let added = 0;
   let updated = 0;
   let nextId = Math.max(0, ...nextListings.map((item) => Number(item.id || 0))) + 1;
@@ -20,25 +22,47 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
 
   for (const item of items) {
     if (item.kind === "listing_url") {
+      const startedAt = new Date().toISOString();
       const listing = await listingFromUrl(item.url, item.query);
       const stored = upsertScrapedListing(listing);
       results.push(stored);
+      scrapeResults.push(normalizeScrapeResult({
+        status: "success",
+        ok: true,
+        query: item.query || queryFallback || item.url,
+        result_count: 1,
+        started_at: startedAt,
+        finished_at: new Date().toISOString()
+      }));
       continue;
     }
 
     const query = item.query || queryFallback;
     if (!query) continue;
+    const startedAt = new Date().toISOString();
+    const startedMs = Date.now();
     const search = await searchCarousell(query, {
       ...options,
       limit: options.limit || "all",
       anchorLimit: options.anchorLimit || 240,
       hydrateDetails: options.hydrateDetails ?? false
     });
+    const rawResults = search.results || [];
     sources.push(search.url || item.url || query);
-    for (const rawListing of search.results || []) {
+    for (const rawListing of rawResults) {
       const stored = upsertScrapedListing(rawListing);
       results.push(stored);
     }
+    scrapeResults.push(normalizeScrapeResult({
+      ...search,
+      query,
+      result_count: rawResults.length,
+      added,
+      updated,
+      started_at: search.started_at || startedAt,
+      finished_at: search.finished_at || new Date().toISOString(),
+      duration_ms: search.duration_ms ?? Date.now() - startedMs
+    }));
   }
 
   if (added || updated) await writeJson("listings", nextListings);
@@ -48,8 +72,12 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
     url: sources[0] || parsed.primary?.url || null,
     start_url_mode: parsed.mode,
     parsed,
+    status: scrapeResults.some((item) => !item.ok) ? "partial" : "success",
+    ok: scrapeResults.every((item) => item.ok),
+    result_count: results.length,
     added,
     updated,
+    scrape_results: scrapeResults,
     results
   };
 
