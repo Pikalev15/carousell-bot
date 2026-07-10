@@ -1,4 +1,6 @@
 import { parseMoney } from "./currency.js";
+import { normalizeScrapeResult, SCRAPE_STATUSES } from "./scrapeResult.js";
+import { buildPageSnapshot, classifyScrapeStatus, parserLabel, validateSearchPage } from "./scrapePageDiagnostics.js";
 
 const CAROUSELL_BASE_URL = "https://www.carousell.sg";
 const USER_AGENT =
@@ -6,9 +8,11 @@ const USER_AGENT =
 const EXCLUDED_IMAGE_PATTERN = /(avatar|profile[-_]?(pic|photo|image)|user[-_]?icon|placeholder|sprite|favicon|\blogo\b|blank\.gif|1x1|loading[-_]?spinner|badge|star-rating|verified-icon)/i;
 
 export async function searchCarousell(query, options = {}) {
+  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
   const limit = options.limit === "all" ? Infinity : Number(options.limit || 24);
   const searchUrl = `${CAROUSELL_BASE_URL}/search/${encodeURIComponent(query)}?addRecent=true&canChangeKeyword=true&includeSuggestions=true&searchId=${Date.now()}`;
-  const pageData = await fetchWithBrowser(searchUrl, { ...options, limit });
+  const pageData = await fetchWithBrowser(searchUrl, { ...options, limit, query, startedAt });
   const found = new Map();
 
   for (const listing of pageData.domListings || []) {
@@ -21,9 +25,52 @@ export async function searchCarousell(query, options = {}) {
   }
 
   const listings = Number.isFinite(limit) ? [...found.values()].slice(0, limit) : [...found.values()];
+  const status = classifyScrapeStatus(pageData.snapshot, listings, pageData.error);
+  const resultCount = isCountableScrapeStatus(status) ? listings.length : null;
+  const validation = validateSearchPage(pageData.snapshot);
+  const scrapeResult = normalizeScrapeResult({
+    status,
+    ok: isCountableScrapeStatus(status),
+    query,
+    watch_id: options.watch?.id ?? options.watch_id ?? null,
+    result_count: resultCount,
+    added: 0,
+    updated: 0,
+    parser: parserLabel(pageData.snapshot),
+    anchors_found: pageData.snapshot?.anchors_found ?? null,
+    next_data_found: pageData.snapshot?.next_data_found ?? null,
+    challenge_detected: validation.challenge_detected,
+    consent_page_detected: validation.consent_page_detected,
+    duration_ms: Date.now() - startedMs,
+    started_at: startedAt,
+    finished_at: new Date().toISOString(),
+    error: pageData.error,
+    diagnostic: {
+      page_title: pageData.snapshot?.page_title || "",
+      final_url: pageData.snapshot?.final_url || searchUrl,
+      body_text_sample: pageData.snapshot?.body_text_sample || "",
+      html_length: pageData.snapshot?.html_length ?? 0,
+      validation_reason: validation.reason
+    }
+  });
+
   return {
     source: "carousell",
     url: searchUrl,
+    status: scrapeResult.status,
+    ok: scrapeResult.ok,
+    result_count: scrapeResult.result_count,
+    parser: scrapeResult.parser,
+    anchors_found: scrapeResult.anchors_found,
+    next_data_found: scrapeResult.next_data_found,
+    challenge_detected: scrapeResult.challenge_detected,
+    consent_page_detected: scrapeResult.consent_page_detected,
+    duration_ms: scrapeResult.duration_ms,
+    started_at: scrapeResult.started_at,
+    finished_at: scrapeResult.finished_at,
+    error: scrapeResult.error,
+    diagnostic: scrapeResult.diagnostic,
+    scrape_result: scrapeResult,
     results: listings
   };
 }
@@ -86,69 +133,96 @@ export async function refreshCarousellListingDetails(listing) {
 
 async function fetchWithBrowser(url, options = {}) {
   const { page, browser } = await newBrowserPage(options);
+  let navigationError = null;
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 });
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 25000 }).catch((error) => {
+      navigationError = error;
+    });
     await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
     await page.waitForSelector('a[href*="/p/"], script#__NEXT_DATA__', { timeout: 10000 }).catch(() => {});
-    let domListings = await page.evaluate((anchorLimit) => {
-      const anchors = [...document.querySelectorAll('a[href*="/p/"]')];
-      return anchors.slice(0, anchorLimit).map((anchor) => {
-        let node = anchor;
-        let cardText = anchor.innerText || "";
-        for (let depth = 0; depth < 5 && node?.parentElement; depth += 1) {
-          node = node.parentElement;
-          const text = node.innerText || "";
-          if (text.length > cardText.length && text.length < 1200) cardText = text;
-        }
-        const imageUrls = collectDomImageUrls(node || anchor, anchor);
-        return {
-          title: anchor.innerText || cardText,
-          cardText,
-          price: cardText,
-          url: anchor.href,
-          imageUrls
-        };
-      });
+    const html = await page.content().catch(() => "");
+    const snapshot = await readSearchPageSnapshot(page, html, url);
+    const status = classifyScrapeStatus(snapshot, [], navigationError);
+    let domListings = [];
 
-      function collectDomImageUrls(...roots) {
-        const urls = [];
-        const add = (value) => {
-          if (!value) return;
-          for (const candidate of String(value).split(",")) {
-            const url = candidate.trim().split(/\s+/)[0].replace(/^["']|["']$/g, "");
-            if (url && !urls.includes(url)) urls.push(url);
+    if (status !== SCRAPE_STATUSES.BLOCKED && status !== SCRAPE_STATUSES.TIMEOUT && status !== SCRAPE_STATUSES.NETWORK_ERROR) {
+      domListings = await page.evaluate((anchorLimit) => {
+        const anchors = [...document.querySelectorAll('a[href*="/p/"]')];
+        return anchors.slice(0, anchorLimit).map((anchor) => {
+          let node = anchor;
+          let cardText = anchor.innerText || "";
+          for (let depth = 0; depth < 5 && node?.parentElement; depth += 1) {
+            node = node.parentElement;
+            const text = node.innerText || "";
+            if (text.length > cardText.length && text.length < 1200) cardText = text;
           }
-        };
-        for (const root of roots) {
-          if (!root) continue;
-          root.querySelectorAll?.("img, source").forEach((image) => {
-            add(image.currentSrc);
-            add(image.src);
-            add(image.srcset);
-            add(image.getAttribute("data-src"));
-            add(image.getAttribute("data-original"));
-            add(image.getAttribute("data-lazy-src"));
-          });
-          root.querySelectorAll?.("[style*='background']").forEach((element) => {
-            const match = String(element.getAttribute("style") || "").match(/url\((["']?)(.*?)\1\)/i);
-            add(match?.[2]);
-          });
-        }
-        return urls;
-      }
-    }, resolveAnchorLimit(options));
+          const imageUrls = collectDomImageUrls(node || anchor, anchor);
+          return {
+            title: anchor.innerText || cardText,
+            cardText,
+            price: cardText,
+            url: anchor.href,
+            imageUrls
+          };
+        });
 
-    if (options.hydrateDetails !== false) {
+        function collectDomImageUrls(...roots) {
+          const urls = [];
+          const add = (value) => {
+            if (!value) return;
+            for (const candidate of String(value).split(",")) {
+              const url = candidate.trim().split(/\s+/)[0].replace(/^["']|["']$/g, "");
+              if (url && !urls.includes(url)) urls.push(url);
+            }
+          };
+          for (const root of roots) {
+            if (!root) continue;
+            root.querySelectorAll?.("img, source").forEach((image) => {
+              add(image.currentSrc);
+              add(image.src);
+              add(image.srcset);
+              add(image.getAttribute("data-src"));
+              add(image.getAttribute("data-original"));
+              add(image.getAttribute("data-lazy-src"));
+            });
+            root.querySelectorAll?.("[style*='background']").forEach((element) => {
+              const match = String(element.getAttribute("style") || "").match(/url\((["']?)(.*?)\1\)/i);
+              add(match?.[2]);
+            });
+          }
+          return urls;
+        }
+      }, resolveAnchorLimit(options)).catch(() => []);
+    }
+
+    if (options.hydrateDetails !== false && domListings.length > 0) {
       domListings = await enrichListingDetails(browser, domListings, options.limit || 24, options);
     }
 
     return {
-      html: await page.content(),
-      domListings
+      html,
+      domListings,
+      snapshot,
+      error: navigationError ? navigationError.message : null
     };
   } finally {
     await browser.close();
   }
+}
+
+async function readSearchPageSnapshot(page, html, requestedUrl) {
+  const data = await page.evaluate(() => {
+    const anchors = [...document.querySelectorAll('a[href*="/p/"]')];
+    return {
+      final_url: location.href,
+      page_title: document.title || "",
+      body_text: document.body?.innerText || "",
+      anchors_found: anchors.length,
+      next_data_found: Boolean(document.querySelector("script#__NEXT_DATA__")),
+      expected_search_structure: Boolean(document.querySelector('input[type="search"], form[action*="search"], [data-testid*="search"], [class*="search"], [class*="Search"]'))
+    };
+  }).catch(() => ({}));
+  return buildPageSnapshot({ ...data, html, requested_url: requestedUrl });
 }
 
 export function extractListingsFromHtml(html, query) {
@@ -496,9 +570,9 @@ function extractLocationFromJson(jsonText = "") {
 function extractLocationFromFreeText(value = "") {
   const source = String(value || "");
   const patterns = [
-    /\b(?:self collect|collection|pickup|pick up)\s*(?:at|near|around|from|in)?\s*([^.\n;]{3,90})/i,
-    /\b(?:meetup|meet-up|meet up)\s+(?:at|near|around|from|in)?\s*([^.\n;]{3,90})/i,
-    /\b(?:deal|dealing)\s+(?:at|near|around|from|in)\s+([^.\n;]{3,90})/i
+    /\b(?:self collect|collection|pickup|pick up)\s*(?:at|near|around|from|in)?\s*([^\.\n;]{3,90})/i,
+    /\b(?:meetup|meet-up|meet up)\s+(?:at|near|around|from|in)?\s*([^\.\n;]{3,90})/i,
+    /\b(?:deal|dealing)\s+(?:at|near|around|from|in)\s+([^\.\n;]{3,90})/i
   ];
   for (const pattern of patterns) {
     const match = source.match(pattern);
@@ -720,6 +794,10 @@ function normalizeUrl(url) {
   if (url.startsWith("http")) return url;
   if (url.startsWith("/")) return `${CAROUSELL_BASE_URL}${url}`;
   return "";
+}
+
+function isCountableScrapeStatus(status) {
+  return [SCRAPE_STATUSES.SUCCESS, SCRAPE_STATUSES.PARTIAL, SCRAPE_STATUSES.LOW_RESULTS, SCRAPE_STATUSES.ZERO_RESULTS].includes(status);
 }
 
 function parsePrice(value) {
