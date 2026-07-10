@@ -17,7 +17,7 @@ It is not trying to be a polished SaaS app. It is more like a personal marketpla
 - Tracks watched searches and can run them on a scheduler
 - Shows alerts, activity history, export routes, and deal candidates in the dashboard
 - Supports Telegram notifications for deal alerts and scrape-health warnings
-- Sends an optional daily Gmail SMTP Top Deals digest for enabled watched searches
+- Sends an optional daily Gmail SMTP Top Deals digest with deal, risk, and final ranking scores
 - Lets you label listings so the training model can learn what you usually skip or like
 
 ## Current status
@@ -148,7 +148,7 @@ Do not commit real Telegram secrets. If a real Telegram bot token was ever commi
 
 ## Daily email digest
 
-The app can send a once-per-day HTML "Top Deals" digest through Gmail SMTP. It uses enabled watched searches, picks listings scraped in the last 24 hours, scores them with simple rules, and skips sending when there are no qualifying deals.
+The app can send a once-per-day HTML "Top Deals" digest through Gmail SMTP. It uses enabled watched searches, picks listings scraped in the last 24 hours, scores them with simple deal and fake/scam risk rules, and skips sending when there are no qualifying deals.
 
 On your PC, open the dashboard Settings view and fill in **Email Digest**:
 
@@ -172,7 +172,7 @@ npm start
 
 `GMAIL_APP_PASSWORD` must be a Google App Password, not your normal Gmail password. `DIGEST_SEND_TIME` is local server time in `HH:mm` format and defaults to `08:00` if omitted or invalid. Dashboard settings are stored locally in `data/config.json`; environment variables are used as a fallback when local digest fields are blank.
 
-The MVP digest is intentionally rule-based: price, saved-search keyword match, freshness, duplicate filtering, and bad-keyword penalties. It does not use AI summaries or Gmail API access.
+The MVP digest is intentionally rule-based. Each listing gets a `dealScore`, `riskScore`, and `finalScore`, with explanation reasons for price vs median, saved-search keyword match, freshness, seller trust, duplicate/repost signals, listing completeness, risky contact/payment keywords, placeholder prices, and missing detail. Medium/high risk listings are marked with a warning badge. It does not use AI summaries, ML, or Gmail API access.
 
 ## Local data
 
