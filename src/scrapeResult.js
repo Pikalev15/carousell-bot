@@ -33,37 +33,60 @@ const BASELINE_SAFE_STATUSES = new Set([
   SCRAPE_STATUSES.LOW_RESULTS,
   SCRAPE_STATUSES.ZERO_RESULTS
 ]);
+const FAILURE_STATUSES = new Set([
+  SCRAPE_STATUSES.BLOCKED,
+  SCRAPE_STATUSES.LAYOUT_CHANGED,
+  SCRAPE_STATUSES.TIMEOUT,
+  SCRAPE_STATUSES.NETWORK_ERROR,
+  SCRAPE_STATUSES.FAILED
+]);
+
+const RESULT_CACHE_TTL_MS = Math.max(10_000, Number(process.env.CAROUSELL_SCRAPE_RESULT_CACHE_TTL_MS || 5 * 60 * 1000));
+const cachedScrapeResults = new Map();
 
 export function normalizeScrapeResult(input = {}) {
   const now = new Date().toISOString();
-  const status = normalizeStatus(input.status, input);
-  const resultCount = nullableNonNegativeInteger(input.result_count ?? input.results_count ?? input.count);
+  const cachedAggregate = aggregateCachedTermResults(input);
+  const status = normalizeStatus(input.status || cachedAggregate?.status, input);
+  const resultCount = nullableNonNegativeInteger(input.result_count ?? input.results_count ?? input.count ?? cachedAggregate?.result_count);
   const added = nonNegativeInteger(input.added);
   const updated = nonNegativeInteger(input.updated);
   const startedAt = normalizeIso(input.started_at || input.startedAt) || now;
   const finishedAt = normalizeIso(input.finished_at || input.finishedAt) || now;
   const diagnostic = input.diagnostic && typeof input.diagnostic === "object" ? { ...input.diagnostic } : {};
+  if (cachedAggregate) {
+    diagnostic.aggregate_terms = cachedAggregate.scrape_results.length;
+    diagnostic.aggregate_source = "cached_term_results";
+  }
 
-  return {
+  const normalized = {
     status,
-    ok: input.ok === undefined ? SUCCESSFUL_STATUSES.has(status) : Boolean(input.ok) && status !== SCRAPE_STATUSES.FAILED,
+    ok: input.ok === undefined ? cachedAggregate?.ok ?? SUCCESSFUL_STATUSES.has(status) : Boolean(input.ok) && !FAILURE_STATUSES.has(status),
     query: String(input.query || ""),
     watch_id: input.watch_id ?? input.watchId ?? null,
     result_count: resultCount,
     result_count_valid: resultCount !== null,
     added,
     updated,
-    parser: input.parser ?? null,
-    anchors_found: nullableNonNegativeInteger(input.anchors_found ?? input.anchorsFound),
-    next_data_found: input.next_data_found === null || input.next_data_found === undefined ? null : Boolean(input.next_data_found),
-    challenge_detected: Boolean(input.challenge_detected || input.challengeDetected),
-    consent_page_detected: Boolean(input.consent_page_detected || input.consentPageDetected),
-    duration_ms: nonNegativeInteger(input.duration_ms ?? input.durationMs),
+    parser: input.parser ?? cachedAggregate?.parser ?? null,
+    anchors_found: nullableNonNegativeInteger(input.anchors_found ?? input.anchorsFound ?? cachedAggregate?.anchors_found),
+    next_data_found: input.next_data_found === null || input.next_data_found === undefined ? cachedAggregate?.next_data_found ?? null : Boolean(input.next_data_found),
+    challenge_detected: Boolean(input.challenge_detected || input.challengeDetected || cachedAggregate?.challenge_detected),
+    consent_page_detected: Boolean(input.consent_page_detected || input.consentPageDetected || cachedAggregate?.consent_page_detected),
+    duration_ms: nonNegativeInteger(input.duration_ms ?? input.durationMs ?? cachedAggregate?.duration_ms),
     started_at: startedAt,
     finished_at: finishedAt,
-    error: input.error ? String(input.error) : null,
-    diagnostic
+    error: input.error ? String(input.error) : cachedAggregate?.error ?? null,
+    diagnostic,
+    scrape_results: cachedAggregate?.scrape_results ?? (Array.isArray(input.scrape_results) ? input.scrape_results.map((item) => normalizeScrapeResult(item)) : [])
   };
+
+  recordCachedScrapeResult(normalized, input);
+  return normalized;
+}
+
+export function clearScrapeResultCache() {
+  cachedScrapeResults.clear();
 }
 
 export function isSuccessfulScrape(result) {
@@ -109,6 +132,82 @@ export function describeScrapeFailure(result) {
   if (normalized.error) return normalized.error;
   if (normalized.status === SCRAPE_STATUSES.FAILED) return "Unknown scrape failure";
   return "Scrape completed";
+}
+
+function aggregateCachedTermResults(input = {}) {
+  const terms = normalizeTerms(input.terms);
+  if (!terms.length) return null;
+  if (input.result_count !== undefined || input.results_count !== undefined || input.count !== undefined) return null;
+
+  pruneCachedScrapeResults();
+  const scrapeResults = terms.map((term) => cachedScrapeResults.get(cacheKey(term))?.result).filter(Boolean);
+  if (scrapeResults.length !== terms.length) return null;
+
+  const failing = scrapeResults.find((item) => FAILURE_STATUSES.has(item.status) || !item.ok);
+  const allCountsValid = scrapeResults.every((item) => item.result_count_valid);
+  const resultCount = allCountsValid ? scrapeResults.reduce((total, item) => total + Number(item.result_count || 0), 0) : null;
+  const ok = scrapeResults.every((item) => item.ok) && !failing;
+  const status = aggregateStatus(scrapeResults, resultCount, failing);
+
+  return {
+    status,
+    ok,
+    result_count: resultCount,
+    parser: aggregateParser(scrapeResults),
+    anchors_found: aggregateNullableSum(scrapeResults, "anchors_found"),
+    next_data_found: aggregateNullableBoolean(scrapeResults, "next_data_found"),
+    challenge_detected: scrapeResults.some((item) => item.challenge_detected),
+    consent_page_detected: scrapeResults.some((item) => item.consent_page_detected),
+    duration_ms: scrapeResults.reduce((total, item) => total + Number(item.duration_ms || 0), 0),
+    error: failing?.error || null,
+    scrape_results: scrapeResults
+  };
+}
+
+function aggregateStatus(scrapeResults, resultCount, failing) {
+  if (failing) return FAILURE_STATUSES.has(failing.status) ? failing.status : SCRAPE_STATUSES.PARTIAL;
+  if (scrapeResults.some((item) => item.status === SCRAPE_STATUSES.PARTIAL)) return SCRAPE_STATUSES.PARTIAL;
+  if (scrapeResults.some((item) => item.status === SCRAPE_STATUSES.LOW_RESULTS)) return SCRAPE_STATUSES.LOW_RESULTS;
+  if (resultCount === 0 && scrapeResults.every((item) => item.status === SCRAPE_STATUSES.ZERO_RESULTS)) return SCRAPE_STATUSES.ZERO_RESULTS;
+  return SCRAPE_STATUSES.SUCCESS;
+}
+
+function recordCachedScrapeResult(result, input = {}) {
+  if (!result.query || normalizeTerms(input.terms).length) return;
+  cachedScrapeResults.set(cacheKey(result.query), { result: { ...result, scrape_results: [] }, cached_at: Date.now() });
+  pruneCachedScrapeResults();
+}
+
+function pruneCachedScrapeResults() {
+  const cutoff = Date.now() - RESULT_CACHE_TTL_MS;
+  for (const [key, entry] of cachedScrapeResults.entries()) {
+    if (!entry?.cached_at || entry.cached_at < cutoff) cachedScrapeResults.delete(key);
+  }
+}
+
+function normalizeTerms(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
+function cacheKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function aggregateParser(scrapeResults) {
+  const parsers = [...new Set(scrapeResults.map((item) => item.parser).filter(Boolean))];
+  if (!parsers.length) return null;
+  return parsers.length === 1 ? parsers[0] : parsers.join(" + ");
+}
+
+function aggregateNullableSum(items, key) {
+  if (items.every((item) => item[key] === null || item[key] === undefined)) return null;
+  return items.reduce((total, item) => total + Number(item[key] || 0), 0);
+}
+
+function aggregateNullableBoolean(items, key) {
+  if (items.every((item) => item[key] === null || item[key] === undefined)) return null;
+  return items.some((item) => Boolean(item[key]));
 }
 
 function normalizeStatus(status, input = {}) {
