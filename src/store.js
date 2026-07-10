@@ -14,6 +14,10 @@ const root = path.resolve(__dirname, "..");
 const dataDir = path.join(root, "data");
 const dbPath = process.env.CAROUSELL_DB_PATH || path.join(dataDir, "carousell-bot.db");
 let transactionDepth = 0;
+let storeVersion = 0;
+let derivedListingsVersion = 0;
+
+const derivedListingsCollections = new Set(["listings", "filters", "sellers", "labels", "config", "trainingModel"]);
 
 const jsonPaths = {
   listings: path.join(dataDir, "listings.json"),
@@ -42,6 +46,14 @@ export function closeDatabase() {
   db?.close();
 }
 
+export function getStoreVersion() {
+  return storeVersion;
+}
+
+export function getDerivedListingsVersion() {
+  return derivedListingsVersion;
+}
+
 export async function readJson(name) {
   return readCollection(name);
 }
@@ -62,7 +74,7 @@ export async function getState() {
     getWatchedSearches(),
     getAlerts()
   ]);
-  return { listings, filters, sellers, config, labels, trainingModel, searches, watchedSearches, alerts };
+  return { listings, filters, sellers, config, labels, trainingModel, searches, watchedSearches, alerts, storeVersion, derivedListingsVersion };
 }
 
 export function upsertListing(listing) {
@@ -104,6 +116,7 @@ export function upsertListing(listing) {
     addPriceHistory(next.id, next.current_price, now);
   }
 
+  bumpStoreVersion("listings");
   return getListingById(next.id);
 }
 
@@ -185,16 +198,22 @@ export function upsertWatchedSearch(input) {
       last_run_at = excluded.last_run_at,
       payload = excluded.payload
   `).run(watchedSearchRow(next));
+  bumpStoreVersion("watchedSearches");
   return getWatchedSearch(next.id);
 }
 
 export function deleteWatchedSearch(id) {
   if (!db) {
     const current = getWatchedSearches();
-    writeJsonFile("watchedSearches", current.filter((item) => Number(item.id) !== Number(id)));
-    return current.length - getWatchedSearches().length;
+    const next = current.filter((item) => Number(item.id) !== Number(id));
+    writeJsonFile("watchedSearches", next);
+    const removed = current.length - next.length;
+    if (removed > 0) bumpStoreVersion("watchedSearches");
+    return removed;
   }
-  return db.prepare("DELETE FROM watched_searches WHERE id = ?").run(Number(id)).changes;
+  const changes = db.prepare("DELETE FROM watched_searches WHERE id = ?").run(Number(id)).changes;
+  if (changes > 0) bumpStoreVersion("watchedSearches");
+  return changes;
 }
 
 export function updateWatchedSearchRun(id, lastRunAt = new Date().toISOString()) {
@@ -237,6 +256,7 @@ export function createAlert(input) {
     VALUES (@id, @type, @title, @message, @listing_id, @watch_id, @created_at, @read_at, @sent_at, @payload)
     ON CONFLICT(id) DO UPDATE SET read_at = excluded.read_at, sent_at = excluded.sent_at, payload = excluded.payload
   `).run(alertRow(next));
+  bumpStoreVersion("alerts");
   return next;
 }
 
@@ -245,11 +265,13 @@ export function markAlertsRead() {
   const alerts = getAlerts({ limit: 500 }).map((alert) => ({ ...alert, read_at: alert.read_at || readAt }));
   if (!db) {
     writeJsonFile("alerts", alerts);
+    if (alerts.length > 0) bumpStoreVersion("alerts");
     return { marked: alerts.length, read_at: readAt };
   }
   runTransaction((items) => {
     for (const alert of items) db.prepare("UPDATE alerts SET read_at = ?, payload = ? WHERE id = ?").run(alert.read_at, JSON.stringify(alert), alert.id);
   }, alerts);
+  if (alerts.length > 0) bumpStoreVersion("alerts");
   return { marked: alerts.length, read_at: readAt };
 }
 
@@ -270,6 +292,7 @@ export function addActivity(input) {
     VALUES (@id, @type, @title, @detail, @timestamp, @listing_id, @watch_id, @payload)
     ON CONFLICT(id) DO UPDATE SET payload = excluded.payload
   `).run(activityRow(next));
+  bumpStoreVersion("activity");
   return next;
 }
 
@@ -416,24 +439,25 @@ function readCollection(name) {
 
 function writeCollection(name, value) {
   if (!db) {
-    if (name === "config") return writeJsonFile("config", withConfigDefaults(value));
-    if (name === "trainingModel") return writeJsonFile("trainingModel", value || {});
-    return writeJsonFile(name, Array.isArray(value) ? value : []);
+    if (name === "config") writeJsonFile("config", withConfigDefaults(value));
+    else if (name === "trainingModel") writeJsonFile("trainingModel", value || {});
+    else writeJsonFile(name, Array.isArray(value) ? value : []);
+    bumpStoreVersion(name);
+    return;
   }
-  if (name === "listings") return replaceRows("listings", value, listingRow);
-  if (name === "filters") return replaceRows("filters", value, filterRow);
-  if (name === "sellers") return replaceRows("sellers", value, sellerRow);
-  if (name === "labels") return replaceRows("labels", value, labelRow);
-  if (name === "searches") return replaceRows("search_history", value, searchRow);
-  if (name === "config") {
+  if (name === "listings") replaceRows("listings", value, listingRow);
+  else if (name === "filters") replaceRows("filters", value, filterRow);
+  else if (name === "sellers") replaceRows("sellers", value, sellerRow);
+  else if (name === "labels") replaceRows("labels", value, labelRow);
+  else if (name === "searches") replaceRows("search_history", value, searchRow);
+  else if (name === "config") {
     db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('main', ?)").run(JSON.stringify(withConfigDefaults(value)));
-    return;
-  }
-  if (name === "trainingModel") {
+  } else if (name === "trainingModel") {
     db.prepare("INSERT OR REPLACE INTO training_model (key, value) VALUES ('main', ?)").run(JSON.stringify(value || {}));
-    return;
+  } else {
+    throw new Error(`Unknown store collection: ${name}`);
   }
-  throw new Error(`Unknown store collection: ${name}`);
+  bumpStoreVersion(name);
 }
 
 function replaceRows(table, rows, rowMapper) {
@@ -594,6 +618,12 @@ function runTransaction(callback, value) {
   }
 }
 
+function bumpStoreVersion(collection) {
+  storeVersion += 1;
+  if (derivedListingsCollections.has(collection)) derivedListingsVersion += 1;
+  return storeVersion;
+}
+
 function upsertJsonListing(listing) {
   const listings = readCollection("listings");
   const existingIndex = listings.findIndex((item) => Number(item.id) === Number(listing.id) || item.carousell_id === listing.carousell_id);
@@ -628,6 +658,7 @@ function upsertJsonWatchedSearch(input) {
   if (existingIndex >= 0) watches[existingIndex] = next;
   else watches.push(next);
   writeJsonFile("watchedSearches", watches);
+  bumpStoreVersion("watchedSearches");
   return next;
 }
 
@@ -663,6 +694,7 @@ function upsertJsonAlert(input) {
   if (existingIndex >= 0) alerts[existingIndex] = next;
   else alerts.unshift(next);
   writeJsonFile("alerts", alerts);
+  bumpStoreVersion("alerts");
   return next;
 }
 
@@ -679,6 +711,7 @@ function appendJsonActivity(input) {
   };
   activity.unshift(next);
   writeJsonFile("activity", activity.slice(0, 500));
+  bumpStoreVersion("activity");
   return next;
 }
 
