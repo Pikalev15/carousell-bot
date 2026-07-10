@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const serverPlusSource = await readFile(new URL("../src/server-plus.js", import.meta.url), "utf8");
+const carousellSearchSource = await readFile(new URL("../src/carousellSearch.js", import.meta.url), "utf8");
 const refinedFeedbackSource = await readFile(new URL("../public/refined-feedback.js", import.meta.url), "utf8");
 const notificationCss = await readFile(new URL("../public/notification-detail.css", import.meta.url), "utf8");
 
@@ -48,6 +49,17 @@ test("scrape page diagnostics helper has valid syntax", () => {
     encoding: "utf8"
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("carousell search emits scrape diagnostics", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/carousellSearch.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(carousellSearchSource, /classifyScrapeStatus/);
+  assert.match(carousellSearchSource, /result_count:\s*scrapeResult\.result_count/);
+  assert.match(carousellSearchSource, /diagnostic:\s*scrapeResult\.diagnostic/);
+  assert.match(carousellSearchSource, /scrape_result:\s*scrapeResult/);
 });
 
 test("refined feedback UI script has valid syntax", () => {
