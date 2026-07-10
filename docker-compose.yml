@@ -10,6 +10,10 @@ services:
       NODE_ENV: production
       TZ: ${TZ:-Asia/Singapore}
       DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:-}
+      GMAIL_USER: ${GMAIL_USER:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      DIGEST_EMAIL_TO: ${DIGEST_EMAIL_TO:-}
+      DIGEST_SEND_TIME: ${DIGEST_SEND_TIME:-08:00}
     ports:
       - "${CAROUSELL_BOT_PORT:-3000}:3000"
     volumes:

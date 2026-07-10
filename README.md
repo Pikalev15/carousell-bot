@@ -17,6 +17,7 @@ It is not trying to be a polished SaaS app. It is more like a personal marketpla
 - Tracks watched searches and can run them on a scheduler
 - Shows alerts, activity history, export routes, and deal candidates in the dashboard
 - Supports Telegram notifications for deal alerts and scrape-health warnings
+- Sends an optional daily Gmail SMTP Top Deals digest for enabled watched searches
 - Lets you label listings so the training model can learn what you usually skip or like
 
 ## Current status
@@ -144,6 +145,24 @@ From the Settings page, you can add:
 Use **Send test message** to check that the bot can reach your chat.
 
 Do not commit real Telegram secrets. If a real Telegram bot token was ever committed, revoke it through @BotFather and issue a new token.
+
+## Daily email digest
+
+The app can send a once-per-day HTML "Top Deals" digest through Gmail SMTP. It uses enabled watched searches, picks listings scraped in the last 24 hours, scores them with simple rules, and skips sending when there are no qualifying deals.
+
+Set these environment variables before starting the server:
+
+```bash
+GMAIL_USER=your-address@gmail.com
+GMAIL_APP_PASSWORD=your-google-app-password
+DIGEST_EMAIL_TO=recipient@example.com
+DIGEST_SEND_TIME=08:00
+npm start
+```
+
+`GMAIL_APP_PASSWORD` must be a Google App Password, not your normal Gmail password. `DIGEST_SEND_TIME` is local server time in `HH:mm` format and defaults to `08:00` if omitted or invalid.
+
+The MVP digest is intentionally rule-based: price, saved-search keyword match, freshness, duplicate filtering, and bad-keyword penalties. It does not use AI summaries or Gmail API access.
 
 ## Local data
 

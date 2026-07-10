@@ -7,6 +7,7 @@ import { extractLocation, hydrateCarousellListings, refreshCarousellListingDetai
 import { lookupMsrpFromGoogle } from "./msrpSearch.js";
 import { getCachedImage, proxiedImageUrl } from "./imageCache.js";
 import { authorizeDashboardRequest, warnIfDashboardUnauthenticated } from "./dashboardAuth.js";
+import { createDailyDigestJob } from "./jobs/dailyDigest.js";
 import { maskTelegramConfig, notifyAlert, parseTelegramCommand, sendTelegramTestMessage, startTelegramCommandPolling, updateTelegramConfig } from "./notifier.js";
 import { analyzeListingRelevance, inferPreciseCategory } from "./relevanceClassifier.js";
 import { SearchScheduler } from "./scheduler.js";
@@ -33,6 +34,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
 const port = Number(process.env.PORT || 3000);
 const scheduler = new SearchScheduler(runWatchedSearch);
+const dailyDigest = createDailyDigestJob();
 const searchJobs = new Map();
 
 const server = http.createServer(async (request, response) => {
@@ -57,6 +59,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
     console.log(`Carousell Bot running at http://localhost:${port}`);
   });
   scheduler.start().catch((error) => console.warn(`Scheduler failed to start: ${error.message}`));
+  dailyDigest.start();
   startTelegramCommandPolling(handleTelegramCommand).catch((error) => console.warn(`Telegram command polling failed: ${error.message}`));
 }
 
