@@ -2,18 +2,38 @@
 
 A local-first Carousell Singapore search, deal-ranking, watchlist, alerting, and marketplace-analysis dashboard.
 
-Carousell Bot is designed for people who want to monitor second-hand listings without repeatedly scrolling through noisy search results. It searches Carousell through Playwright, stores observations locally, removes common junk, ranks likely deals, tracks changes over time, and learns from manual feedback.
+Carousell Bot is built for personal marketplace monitoring. It searches Carousell with Playwright, stores observations locally, filters noisy listings, ranks likely deals, tracks price/history changes, alerts you through Telegram or email, and learns from manual feedback.
 
-The project is intended for personal local or LAN use. It is not a hosted SaaS service and should not be exposed directly to the public internet.
+The project is intended for personal local or LAN/NAS use. It is **not** a hosted SaaS service and should not be exposed directly to the public internet.
+
+## Current status
+
+**v1.0 status: NAS-ready stable baseline.**
+
+The app now has a working Docker/NAS deployment path, a unified default runtime, dashboard search, watched searches, Telegram alerts, alert mark-read reliability, duplicate handling, scraper diagnostics, SQLite-first persistence, JSON fallback, and a passing Node test suite.
+
+This does not mean the project is finished forever. It means the current `main` branch is a usable baseline that can run continuously on a home NAS.
+
+Important limitations:
+
+- Carousell can change its frontend or anti-automation behavior at any time.
+- Scraper diagnostics reduce false baselines, but real-world scraping still needs monitoring.
+- Deal scores depend on extracted price, title, description, model, condition, seller, and market data quality.
+- Seller ratings and detail fields may be unavailable until hydration succeeds.
+- SQLite is preferred, but selected fallback/local state remains JSON-based.
+- Default runtime is unified through `src/server-unified.js`; the legacy core `src/server.js` remains available mainly for debugging.
+- The app is designed for one trusted user/household, not untrusted multi-user hosting.
 
 ## Highlights
 
 - Playwright-powered Carousell search using bundled Chromium
 - Browser dashboard for search, review, filtering, and training
+- Unified default runtime via `src/server-unified.js`
 - SQLite-first storage with automatic JSON migration and JSON fallback
 - Listing classification and multi-factor deal scoring
 - Confidence scores, risk flags, penalties, and negotiation estimates
-- Watched searches with configurable scheduler and jitter
+- Watched searches with scheduler, jitter, per-watch failure isolation, and health checks
+- Structured scrape outcomes such as success, zero-results, blocked, layout-changed, timeout, network error, and failure
 - Telegram deal alerts, scrape-health warnings, commands, and training buttons
 - Optional daily Gmail SMTP deal digest
 - Listing detail hydration and data-enrichment tools
@@ -30,27 +50,13 @@ The project is intended for personal local or LAN use. It is not a hosted SaaS s
 - Cached listing views and optional performance logging
 - Docker and NAS deployment files
 
-## Current status
-
-The application is a feature-rich personal prototype rather than a finished public service.
-
-The core search, storage, scoring, dashboard, scheduler, alerting, training, export, and NAS flows are implemented. The main remaining engineering work is making scraper health more explicit, improving product identity and comparable pricing, strengthening lifecycle tracking, and adding broader regression coverage.
-
-Important limitations:
-
-- Carousell can change its frontend or anti-automation behavior at any time.
-- A successful HTTP request does not always mean the page contained valid search results.
-- Deal scores depend on the quality of extracted price, model, condition, seller, and market data.
-- Seller ratings and other detail fields may be unavailable until hydration succeeds.
-- SQLite is preferred, but some fallback behavior remains JSON-based.
-- This project is built for one trusted user or household, not untrusted multi-user hosting.
-
 ## Requirements
 
 - Node.js 22.5 or newer
 - npm
 - Network access to Carousell Singapore
 - Enough disk space for Playwright Chromium and local data
+- Docker and Docker Compose for NAS deployment
 
 The project uses the full `playwright` package. During installation, the `postinstall` script runs:
 
@@ -60,13 +66,14 @@ playwright install chromium
 
 A separate Chrome installation and `CHROME_PATH` are not required for the normal setup.
 
-## Quick start
+## Quick start: local Node runtime
 
 ```bash
 git clone https://github.com/Pikalev15/carousell-bot.git
 cd carousell-bot
 npm install
 cp data/config.example.json data/config.json
+npm test
 npm start
 ```
 
@@ -78,13 +85,85 @@ http://localhost:3000
 
 On Windows, `start-local.bat` can also launch the project.
 
+## Quick start: NAS Docker runtime
+
+The normal NAS update flow is:
+
+```bash
+cd ~/carousell-bot
+git pull origin main
+docker compose up -d --build
+```
+
+Check logs:
+
+```bash
+docker compose logs -f
+```
+
+Check container status:
+
+```bash
+docker compose ps
+```
+
+Health check from the NAS:
+
+```bash
+curl http://localhost:3000/api/health
+```
+
+Expected response:
+
+```json
+{"ok":true}
+```
+
+For a clean restart:
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+Persist the `data/` directory or database path so searches, alerts, watchlists, labels, config, and history survive container rebuilds.
+
+## Watchtower note
+
+Watchtower can update containers only when the running service uses an image from a registry such as Docker Hub or GHCR.
+
+If `docker-compose.yml` uses:
+
+```yaml
+services:
+  carousell-bot:
+    build: .
+```
+
+then Watchtower will **not** pull Git changes or rebuild the app. Use:
+
+```bash
+git pull origin main
+docker compose up -d --build
+```
+
+Watchtower becomes useful later if the project publishes a versioned image, for example:
+
+```yaml
+services:
+  carousell-bot:
+    image: ghcr.io/pikalev15/carousell-bot:latest
+```
+
+That would require a GitHub Actions image build/push workflow.
+
 ## Runtime commands
 
 ```bash
-npm start              # Full runtime: src/server-plus.js
+npm start              # Default unified runtime: src/server-unified.js
 npm run dev            # Same runtime without a separate build step
-npm run start:plus     # Explicit full-runtime alias
-npm run start:core     # Core server only, mainly for debugging
+npm run start:plus     # Explicit unified-runtime alias
+npm run start:core     # Legacy core server only, mainly for debugging
 npm run migrate        # Migrate supported JSON data into SQLite
 npm run clean:images   # Clean cached listing images
 npm run enrich:data    # Enrich stored listing data
@@ -102,6 +181,8 @@ Set a long random dashboard token before making the service reachable from other
 DASHBOARD_TOKEN=replace-with-a-long-random-string npm start
 ```
 
+For Docker Compose, set it in the service environment or `.env` file.
+
 When configured, every `/api/*` route except `/api/health` requires the token. The dashboard stores the supplied token in `sessionStorage` for the current browser tab/session.
 
 Authentication can be supplied through:
@@ -117,12 +198,13 @@ Do not expose an unauthenticated instance on a NAS, reverse proxy, port forward,
 1. Enter a search query or one or more supported Carousell start URLs.
 2. The scraper opens Carousell with Playwright.
 3. Visible listing cards and supported structured page data are parsed.
-4. New and changed listings are stored.
-5. Optional detail hydration retrieves descriptions, sellers, locations, images, and better price information.
-6. Listings are classified and scored.
-7. Duplicate metadata, market medians, feedback, watch rules, snoozes, and seller rules are applied.
-8. The dashboard displays results and alerts qualifying deals.
-9. Manual labels improve future preference scoring.
+4. The scraper records diagnostics about the page shape and result count.
+5. New and changed listings are stored.
+6. Optional detail hydration retrieves descriptions, sellers, locations, images, and better price information.
+7. Listings are classified and scored.
+8. Duplicate metadata, market medians, feedback, watch rules, snoozes, and seller rules are applied.
+9. The dashboard displays results and alerts qualifying deals.
+10. Manual labels improve future preference scoring.
 
 ## Search and scraping
 
@@ -144,6 +226,23 @@ Search modes include:
 
 The scraper uses Singapore locale and timezone settings where supported.
 
+Search responses can include scrape metadata such as:
+
+- `status`
+- `ok`
+- `result_count`
+- `result_count_valid`
+- `parser`
+- `anchors_found`
+- `next_data_found`
+- `challenge_detected`
+- `consent_page_detected`
+- `diagnostic`
+- `scrape_result`
+- `scrape_results`
+
+Invalid/blocked/layout-changed pages keep `result_count: null` so they do not become fake zero-result baselines.
+
 ## Listing hydration
 
 Initial search cards may not include complete information. Hydration can add or improve:
@@ -157,7 +256,7 @@ Initial search cards may not include complete information. Hydration can add or 
 - Listing timestamp information where available
 - Variation and structured listing details
 
-Hydration is deliberately concurrency-limited to reduce load and avoid opening too many pages at once.
+Hydration is concurrency-limited to reduce load and avoid opening too many pages at once.
 
 ## Classification
 
@@ -218,7 +317,7 @@ Returned score data includes:
 - Trend direction
 - Risk flags
 
-A high score should still be reviewed when confidence is low, the displayed price is unusually cheap, or the listing appears to be a bundle, accessory, deposit, variation, or damaged item.
+A high score should still be reviewed when confidence is low, the displayed price is unusually cheap, or the listing appears to be a bundle, accessory, deposit, variation, damaged item, or incomplete product.
 
 ## Market medians
 
@@ -230,7 +329,7 @@ The bot can use:
 
 Rolling category-median tuning can update market references from collected data. Default-median scripts are also included.
 
-Broad category medians are only approximations. Exact product-model, capacity, condition, and variant matching is a major area for future improvement.
+Broad category medians are approximations. Exact product-model, capacity, condition, and variant matching is a future improvement area.
 
 ## Duplicate handling
 
@@ -257,8 +356,6 @@ The dashboard and API can retrieve:
 - Direct listing price history
 - Duplicate-aware merged history
 - CSV price-history exports
-
-Unchanged prices are not repeatedly inserted.
 
 ## Seller tools
 
@@ -331,21 +428,30 @@ Features include:
 - Per-watch failure isolation
 - Continued processing when one watch fails
 - Scrape-health checks
+- Summary or individual health-alert modes
+- Recovery notifications after unhealthy runs recover
 - Protection against overwriting settings changed during a long run
 
 Scheduler configuration is stored in the local config collection.
 
 ## Scrape-health monitoring
 
-Health monitoring compares a watch’s current result count with its previous healthy count.
+Health monitoring compares a watch’s current valid result count with its previous healthy count.
 
-When a result count falls below the configured ratio, the bot can generate a warning suggesting that:
+The bot can detect or preserve signals for:
 
-- Carousell returned unexpectedly few results
-- The page structure may have changed
-- The session may have encountered a blocked or incomplete page
+- Real zero-result pages
+- Suspiciously low result counts
+- Blocked/challenge pages
+- Consent/login/interstitial pages
+- Layout changes
+- Timeouts
+- Network errors
+- Generic scrape failures
 
-Health alerts are rate-limited per watch. Explicit blocked-page and layout-change detection remain areas for further improvement.
+Health alerts are deduped and rate-limited per watch/event type. Invalid scrapes keep `result_count: null`, so failed pages are not treated as real empty markets.
+
+The unified default runtime also bridges watched-search scrape diagnostics through the scheduler health layer. Direct legacy-core `server.js` diagnostics wiring is experimental and lives on the beta branch/patch path.
 
 ## Listing snoozing and watch muting
 
@@ -418,7 +524,13 @@ Local alert records can include:
 - Listing and watch references
 - Error details
 
-The activity log records scheduler runs, scrape failures, health-check failures, and other operational events.
+Reliability improvements include:
+
+- Monotonic runtime IDs for notifier-created alerts
+- Safer mark-read behavior for large alert sets
+- JSON and SQLite mark-read paths that avoid truncating alert history
+
+The activity log records scheduler runs, scrape failures, health-check failures, hydration jobs, alerts, and other operational events.
 
 ## Imports and exports
 
@@ -436,7 +548,7 @@ GET  /api/export/price-history.csv
 GET  /api/start-urls/parse?url=<encoded-url>
 ```
 
-Additional API routes cover listings, deals, price history, duplicate overrides, seller reputation, snoozing, feedback, searches, alerts, and search-job status.
+Additional API routes cover listings, deals, price history, duplicate overrides, seller reputation, snoozing, feedback, searches, alerts, scheduler status, and search-job status.
 
 Treat exports as personal data: they can contain search history, seller information, pricing history, configuration, and marketplace behavior.
 
@@ -515,10 +627,9 @@ For NAS use:
 - Back up the SQLite database and configuration.
 - Monitor disk usage from cached images, logs, alerts, and history.
 - Keep Playwright and Chromium versions aligned with the application image.
+- Rebuild after Git pulls when using local `build: .` images.
 
 ## Configuration and environment variables
-
-Common environment variables:
 
 | Variable | Purpose |
 | --- | --- |
@@ -531,6 +642,8 @@ Common environment variables:
 | `GMAIL_APP_PASSWORD` | Gmail App Password fallback |
 | `DIGEST_EMAIL_TO` | Daily-digest recipient fallback |
 | `DIGEST_SEND_TIME` | Daily-digest local send time |
+| `CAROUSELL_ALERT_EVENTS_PATH` | Optional JSON path for scrape-health alert-event state |
+| `CAROUSELL_SCRAPE_RESULT_CACHE_TTL_MS` | Optional scrape-result cache TTL for watched-search aggregation |
 
 Additional notification and runtime settings can be stored in the local config through the dashboard.
 
@@ -542,12 +655,18 @@ Run:
 npm test
 ```
 
+For a more explicit test list:
+
+```bash
+node --test test/*.test.js --test-reporter spec
+```
+
 The project uses Node’s built-in test runner.
 
 Important regression areas include:
 
 - Runtime defaults
-- Parsing and normalization
+- Scrape diagnostics and normalization
 - Classification and scoring
 - Duplicate grouping
 - Storage and migration
@@ -555,6 +674,7 @@ Important regression areas include:
 - Authentication
 - Search URL parsing
 - Export formatting
+- Alert ID and mark-read reliability
 
 Real-page fixture coverage should continue to expand because scraper behavior is the most change-sensitive part of the application.
 
@@ -567,10 +687,19 @@ carousell-bot/
 ├── public/                     # Dashboard HTML, CSS, and browser JavaScript
 ├── scripts/                    # Migration, cleanup, enrichment, export, deployment
 ├── src/
-│   ├── server.js               # Core HTTP server and original runtime
-│   ├── server-plus.js          # Default extended runtime and API routes
-│   ├── scraper.js              # Playwright search and detail extraction
+│   ├── server-unified.js       # Default unified runtime entrypoint
+│   ├── plusRuntime.js          # Extended dashboard/API runtime layer
+│   ├── server-plus.js          # Compatibility shim to server-unified.js
+│   ├── server.js               # Legacy core HTTP server/debug runtime
+│   ├── carousellSearch.js      # Playwright search and page diagnostics
+│   ├── startUrlSearch.js       # Carousell URL parsing and multi-URL search
+│   ├── scrapeResult.js         # Scrape-result normalization and watch bridge
+│   ├── scrapeHealth.js         # Scheduler scrape-health events and formatting
+│   ├── scrapePageDiagnostics.js
+│   ├── serverSearchDiagnostics.js
 │   ├── store.js                # SQLite-first persistence and JSON fallback
+│   ├── storeReliability.js     # Alert mark-read reliability helpers
+│   ├── runtimeIds.js           # Monotonic runtime ID helper
 │   ├── scheduler.js            # Watched-search scheduling and health checks
 │   ├── filterEngine.js         # Classification, scoring, confidence, risk
 │   ├── notifier.js             # Telegram and notification delivery
@@ -589,17 +718,17 @@ carousell-bot/
 └── README.md
 ```
 
-## Reliability roadmap
+## v1.1 roadmap
 
-Highest-priority improvements:
+Highest-priority improvements after v1.0:
 
-- Structured scrape outcomes: success, partial, blocked, layout-changed, failed
-- Challenge, consent-page, and empty-page detection
-- Persistent scrape-job queue with retries and cancellation
-- Shared browser manager instead of repeated browser launches
-- Request body limits, rate limits, and stronger LAN defaults
-- Database backup, integrity checking, retention, and restore tooling
-- Better listing lifecycle states: new, updated, sold, deleted, relisted
+- Publish Docker images to GHCR and make Watchtower useful
+- Complete/validate the experimental direct `src/server.js` scrape-diagnostics beta patch
+- Add database backup, integrity checking, retention, and restore tooling
+- Add persistent scrape-job queue with retries and cancellation
+- Add request body limits, rate limits, and stronger LAN defaults
+- Improve listing lifecycle states: new, updated, sold, deleted, relisted
+- Expand real-page fixtures for scraper regression testing
 
 ## Data-quality roadmap
 
