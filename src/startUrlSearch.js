@@ -26,6 +26,7 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
       const listing = await listingFromUrl(item.url, item.query);
       const stored = upsertScrapedListing(listing);
       results.push(stored);
+      sources.push(item.url);
       scrapeResults.push(normalizeScrapeResult({
         status: "success",
         ok: true,
@@ -55,8 +56,9 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
     }
     scrapeResults.push(normalizeScrapeResult({
       ...search,
+      ...(search.scrape_result || {}),
       query,
-      result_count: rawResults.length,
+      result_count: resultCountFromSearch(search, rawResults.length),
       added,
       updated,
       started_at: search.started_at || startedAt,
@@ -67,16 +69,19 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
 
   if (added || updated) await writeJson("listings", nextListings);
 
+  const summary = summarizeScrapeResults(scrapeResults, results.length);
+
   return {
     source: "carousell-starturls",
     url: sources[0] || parsed.primary?.url || null,
     start_url_mode: parsed.mode,
     parsed,
-    status: scrapeResults.some((item) => !item.ok) ? "partial" : "success",
-    ok: scrapeResults.every((item) => item.ok),
-    result_count: results.length,
+    status: summary.status,
+    ok: summary.ok,
+    result_count: summary.result_count,
     added,
     updated,
+    scrape_result: scrapeResults.length === 1 ? scrapeResults[0] : null,
     scrape_results: scrapeResults,
     results
   };
@@ -98,6 +103,31 @@ export async function searchAndStoreStartUrls(body = {}, options = {}) {
     added += 1;
     return created;
   }
+}
+
+export function resultCountFromSearch(search = {}, fallbackCount = 0) {
+  if (search?.scrape_result && hasOwn(search.scrape_result, "result_count")) return search.scrape_result.result_count;
+  if (hasOwn(search, "result_count")) return search.result_count;
+  return fallbackCount;
+}
+
+export function summarizeScrapeResults(scrapeResults = [], fallbackCount = 0) {
+  const results = Array.isArray(scrapeResults) ? scrapeResults : [];
+  if (!results.length) {
+    return {
+      status: "success",
+      ok: true,
+      result_count: normalizedCountOrNull(fallbackCount)
+    };
+  }
+
+  const ok = results.every((item) => item?.ok);
+  const countsAreValid = results.every(hasValidResultCount);
+  return {
+    status: ok ? "success" : "partial",
+    ok,
+    result_count: countsAreValid ? results.reduce((total, item) => total + Number(item.result_count || 0), 0) : null
+  };
 }
 
 async function listingFromUrl(url, fallbackTitle = "") {
@@ -128,6 +158,21 @@ async function listingFromUrl(url, fallbackTitle = "") {
     image_urls: [],
     scraped_at: new Date().toISOString()
   });
+}
+
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value || {}, key);
+}
+
+function hasValidResultCount(result = {}) {
+  if (result.result_count_valid === false) return false;
+  return normalizedCountOrNull(result.result_count) !== null;
+}
+
+function normalizedCountOrNull(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? count : null;
 }
 
 function mergeListingDetails(existing, incoming) {
