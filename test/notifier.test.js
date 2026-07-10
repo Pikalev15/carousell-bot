@@ -12,7 +12,7 @@ test("parses telegram slash commands", () => {
 test("exposes botfather-style command menu definitions", () => {
   assert.deepEqual(
     TELEGRAM_COMMANDS.map((item) => item.command),
-    ["search", "watch", "unwatch", "status", "deals", "help"]
+    ["search", "watch", "unwatch", "status", "deals", "settings", "help"]
   );
   assert.equal(TELEGRAM_COMMANDS.every((item) => item.description.length > 0 && !item.command.startsWith("/")), true);
 });
@@ -60,6 +60,7 @@ test("builds inline action keyboard and parses callback data", () => {
   assert.equal(keyboard.inline_keyboard[0][0].text, "Open");
   assert.equal(keyboard.inline_keyboard[1][0].callback_data, "cb:good:42");
   assert.deepEqual(parseTelegramCallbackData("cb:bad_deal:42"), { action: "bad_deal", listingId: 42 });
+  assert.deepEqual(parseTelegramCallbackData("tgset:dnd"), { kind: "settings", action: "dnd", settingAction: "dnd", listingId: 0 });
   assert.deepEqual(parseTelegramCallbackData("bad"), { action: "", listingId: 0 });
 });
 
