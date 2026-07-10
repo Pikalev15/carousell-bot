@@ -69,6 +69,7 @@ test("serves core and roadmap API endpoints", async () => {
     });
     const alertsAfterLinkedNotification = await getJson(`${base}/api/alerts`);
     const config = await getJson(`${base}/api/config`);
+    const telegramStatus = await handleTelegramCommand("/status");
     const telegramGpuRanked = rankTelegramSearchResults([
       {
         id: 900,
@@ -141,6 +142,13 @@ test("serves core and roadmap API endpoints", async () => {
     );
     assert.equal(telegramGpuRanked[0].id, 901);
     assert.equal(config.telegram.botTokenConfigured, true);
+    assert.match(telegramStatus, /Carousell Bot Status/);
+    assert.match(telegramStatus, /Runtime/);
+    assert.match(telegramStatus, /Monitors/);
+    assert.match(telegramStatus, /Alerts/);
+    assert.match(telegramStatus, /Listings/);
+    assert.match(telegramStatus, /Queued:/);
+    assert.match(telegramStatus, /lian li|Computers & Tech/);
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));

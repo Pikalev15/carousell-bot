@@ -33,6 +33,7 @@ import {
 import { labelPolarity, predictPreference, trainModel } from "./trainingModel.js";
 import { installPlusRuntime } from "./plusRuntime.js";
 import { aggregateWatchedSearchDiagnostics, attachScrapeMetadataToSearchSummary } from "./serverSearchDiagnostics.js";
+import { isQueuedTelegramAlert, telegramAlertSettings } from "./telegramNotificationPolicy.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -1246,19 +1247,7 @@ async function handleCoreTelegramCommand(text) {
   }
 
   if (command === "/status") {
-    const config = (await getState()).config;
-    const status = scheduler.status(config);
-    const watches = (await getWatchedSearches()).filter((watch) => watch.active);
-    return [
-      `Scheduler: ${status.enabled ? "active" : "paused"}${status.running ? " (running)" : ""}`,
-      `Last: ${status.lastRunAt || "never"}`,
-      `Next: ${status.nextRunAt || "not scheduled"}`,
-      `Active monitors: ${watches.length}`,
-      watches.map((watch) => {
-        const terms = watchTerms(watch, config);
-        return `- ${watch.query} (${terms.length} term${terms.length === 1 ? "" : "s"})`;
-      }).join("\n")
-    ].filter(Boolean).join("\n");
+    return telegramStatusMessage(await getState());
   }
 
   if (command === "/deals") {
@@ -1268,6 +1257,88 @@ async function handleCoreTelegramCommand(text) {
   }
 
   return `Unknown command: ${command}. Try /help.`;
+}
+
+async function telegramStatusMessage(state) {
+  const config = state.config || {};
+  const status = scheduler.status(config);
+  const watches = await getWatchedSearches();
+  const activeWatches = watches.filter((watch) => watch.active);
+  const mutedWatches = activeWatches.filter((watch) => isWatchMutedNow(watch));
+  const runnableWatches = activeWatches.filter((watch) => !isWatchMutedNow(watch));
+  const alerts = getAlerts({ limit: 250 });
+  const unread = getAlerts({ unreadOnly: true, limit: 250 }).length;
+  const queued = alerts.filter(isQueuedTelegramAlert);
+  const failedAlerts = alerts.filter((alert) => alert.error).slice(0, 3);
+  const recentErrors = getActivity(30).filter((item) => /error|failed|limit/i.test(`${item.type || ""} ${item.title || ""}`)).slice(0, 3);
+  const telegram = config.telegram || {};
+  const alertSettings = telegramAlertSettings(config);
+  const deals = buildListings(state, "", { includeFiltered: false }).filter((listing) => listing.score?.is_deal);
+  const cleanListings = buildListings(state, "", { includeFiltered: false });
+
+  return [
+    "Carousell Bot Status",
+    "",
+    "Runtime",
+    `- Dashboard: ${telegram.enabled ? "Telegram enabled" : "Telegram disabled"}${telegram.botToken ? " / token saved" : " / no token"}${telegram.chatId ? ` / chat ${telegram.chatId}` : " / no chat"}`,
+    `- Scheduler: ${status.enabled ? "active" : "paused"}${status.running ? " (running now)" : ""}`,
+    `- Last run: ${formatStatusTime(status.lastRunAt)}`,
+    `- Next run: ${status.enabled ? formatStatusTime(status.nextRunAt) : "not scheduled"}`,
+    `- Interval: ${status.intervalMinutes} min, jitter ${status.jitterSeconds}s, between watches ${status.interWatchDelaySeconds}s, max run ${status.maxRunMinutes} min`,
+    status.activeRun ? `- Active run: ${status.activeRun.id || "running"} since ${formatStatusTime(status.activeRun.started_at)}` : "",
+    "",
+    "Monitors",
+    `- Active: ${activeWatches.length} (${runnableWatches.length} runnable, ${mutedWatches.length} muted)`,
+    `- Total saved: ${watches.length}`,
+    formatWatchStatusLines(runnableWatches, config),
+    mutedWatches.length ? `- Muted: ${mutedWatches.map((watch) => watch.query).slice(0, 5).join(", ")}` : "",
+    "",
+    "Alerts",
+    `- Mode: ${alertSettings.enabled ? alertSettings.mode.replace("_", " ") : "off"}`,
+    `- Instant: score ${alertSettings.minInstantScore}+, max ${alertSettings.maxInstantPerHour === 0 ? "unlimited" : `${alertSettings.maxInstantPerHour}/hour`}`,
+    `- Quiet hours: ${alertSettings.quietHours.enabled ? `${alertSettings.quietHours.start}-${alertSettings.quietHours.end}` : "off"}`,
+    `- Digest: ${alertSettings.digest.enabled ? `${alertSettings.digest.time}, top ${alertSettings.digest.maxItems}, score ${alertSettings.digest.minScore}+` : "off"}`,
+    `- Queued: ${queued.length}, unread dashboard alerts: ${unread}`,
+    failedAlerts.length ? `- Recent alert failures: ${failedAlerts.map((alert) => alert.title || alert.error).join("; ")}` : "",
+    "",
+    "Listings",
+    `- Stored: ${state.listings?.length || 0}, clean visible: ${cleanListings.length}, deal candidates: ${deals.length}`,
+    `- Recent searches: ${state.searches?.length || 0}`,
+    "",
+    recentErrors.length ? ["Recent Issues", ...recentErrors.map((item) => `- ${item.title || item.type}: ${item.detail || "no details"}`)].join("\n") : "Recent Issues\n- none"
+  ].flat().filter(Boolean).join("\n").slice(0, 3900);
+}
+
+function formatWatchStatusLines(watches, config) {
+  if (!watches.length) return "- No runnable monitors";
+  return watches.slice(0, 8).map((watch) => {
+    const terms = watchTerms(watch, config);
+    const ceiling = watch.price_ceiling ? `, max S$${Number(watch.price_ceiling).toLocaleString()}` : "";
+    const lastCount = watch.last_result_count === undefined || watch.last_result_count === null ? "" : `, last ${watch.last_result_count} results`;
+    return `- ${watch.query} (${terms.length} term${terms.length === 1 ? "" : "s"}${ceiling}${lastCount}, last ${formatStatusTime(watch.last_run_at)})`;
+  }).join("\n") + (watches.length > 8 ? `\n- ...and ${watches.length - 8} more` : "");
+}
+
+function formatStatusTime(value) {
+  if (!value) return "never";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const ageMs = Date.now() - date.getTime();
+  const absAgeMs = Math.abs(ageMs);
+  const minutes = Math.round(absAgeMs / 60000);
+  const suffix = ageMs >= 0 ? "ago" : "from now";
+  const relative = minutes < 1
+    ? "just now"
+    : minutes < 60
+      ? `${minutes} min ${suffix}`
+      : minutes < 1440
+        ? `${Math.round(minutes / 60)} hr ${suffix}`
+        : `${Math.round(minutes / 1440)} day ${suffix}`;
+  return `${date.toLocaleString("en-SG", { timeZone: "Asia/Singapore", hour12: false })} (${relative})`;
+}
+
+function isWatchMutedNow(watch) {
+  return Boolean(watch?.muted_until && new Date(watch.muted_until).getTime() > Date.now());
 }
 
 function formatListingLines(listings) {
