@@ -12,6 +12,9 @@ const state = {
   config: {},
   stats: {},
   trainingModel: {},
+  health: {},
+  diagnostics: {},
+  priceTargets: [],
   searchResults: [],
   lastQuery: "",
   searchJob: null,
@@ -194,6 +197,36 @@ document.getElementById("watchlist-form").addEventListener("submit", async (even
     showToast(`Watchlist update failed: ${error.message}`, "error");
   }
 });
+
+document.getElementById("price-target-form")?.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const formElement = event.currentTarget;
+  const button = formElement.querySelector("button");
+  setButtonBusy(button);
+  try {
+    const form = new FormData(formElement);
+    await api.post("/api/price-targets", {
+      query: form.get("query"),
+      target_price: form.get("target_price"),
+      active: true,
+      watch: true
+    });
+    formElement.reset();
+    await load();
+    showToast("Price target saved");
+  } catch (error) {
+    showToast(`Price target failed: ${error.message}`, "error");
+  } finally {
+    resetButtonBusy(button);
+  }
+});
+
+document.getElementById("preset-name")?.addEventListener("change", (event) => {
+  const terms = state.config.categoryPresets?.[event.currentTarget.value] || [];
+  const presetForm = document.getElementById("preset-form");
+  if (presetForm) presetForm.elements.terms.value = terms.join(", ");
+});
+
 document.getElementById("preset-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const button = event.currentTarget.querySelector("button");
@@ -201,7 +234,7 @@ document.getElementById("preset-form").addEventListener("submit", async (event) 
   try {
     const form = new FormData(event.currentTarget);
     await api.patch("/api/config/category-presets", {
-      name: "Computers & Tech",
+      name: form.get("name") || "Computers & Tech",
       terms: form.get("terms")
     });
     await load();
@@ -386,6 +419,56 @@ document.addEventListener("click", async (event) => {
     }, "Watched search failed");
   }
 
+  if (button.dataset.addPresetWatch) {
+    return runBusyAction(button, async () => {
+      await api.post("/api/watchlist", { query: button.dataset.addPresetWatch, active: true });
+      await load();
+      showToast(`Monitoring ${button.dataset.addPresetWatch}`);
+    }, "Preset monitor failed");
+  }
+
+  if (button.dataset.toggleTarget) {
+    return runAction(async () => {
+      const target = state.priceTargets.find((item) => String(item.id) === String(button.dataset.toggleTarget));
+      await api.patch(`/api/price-targets/${encodeURIComponent(button.dataset.toggleTarget)}`, { active: !target?.active });
+      await load();
+      showToast("Price target updated");
+    }, "Price target update failed");
+  }
+
+  if (button.dataset.deleteTarget) {
+    return runAction(async () => {
+      await api.delete(`/api/price-targets/${encodeURIComponent(button.dataset.deleteTarget)}`);
+      await load();
+      showToast("Price target deleted");
+    }, "Delete target failed");
+  }
+
+  if (button.dataset.exportConfig) {
+    return runBusyAction(button, async () => {
+      const bundle = await api.get("/api/export");
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `carousell-bot-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+      showToast("Backup exported");
+    }, "Backup export failed");
+  }
+
+  if (button.dataset.importConfig) {
+    return runBusyAction(button, async () => {
+      const input = document.getElementById("backup-import-file");
+      const file = input?.files?.[0];
+      if (!file) throw new Error("Choose a backup JSON file first");
+      const bundle = JSON.parse(await file.text());
+      await api.post("/api/import", bundle);
+      await load();
+      showToast("Backup imported");
+    }, "Backup import failed");
+  }
+
   if (button.dataset.schedulerToggle) {
     return runAction(async () => {
       const enabled = button.dataset.schedulerToggle !== "true";
@@ -407,7 +490,7 @@ document.addEventListener("click", async (event) => {
 async function load() {
   document.body.classList.add("is-loading");
   try {
-    const [listings, deals, filters, sellers, stats, labels, searches, trainingModel, alerts, watchlist, activity, scheduler, config] = await Promise.all([
+    const [listings, deals, filters, sellers, stats, labels, searches, trainingModel, alerts, watchlist, activity, scheduler, config, health, diagnostics, priceTargets] = await Promise.all([
       api.get("/api/listings?include_filtered=true"),
       api.get("/api/deals"),
       api.get("/api/filters/blacklist"),
@@ -420,9 +503,12 @@ async function load() {
       api.get("/api/watchlist"),
       api.get("/api/activity"),
       api.get("/api/scheduler"),
-      api.get("/api/config")
+      api.get("/api/config"),
+      api.get("/api/system/health"),
+      api.get("/api/search/diagnostics"),
+      api.get("/api/price-targets")
     ]);
-    Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches, trainingModel, alerts, watchlist, activity, scheduler, config });
+    Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches, trainingModel, alerts, watchlist, activity, scheduler, config, health, diagnostics, priceTargets });
     if (state.lastQuery) {
       state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, state.lastQuery)), "search");
     }
@@ -450,6 +536,10 @@ function renderAll() {
   renderScheduler();
   renderTelegram();
   renderDigestEmail();
+  renderSystemHealth();
+  renderSearchDiagnostics();
+  renderPriceTargets();
+  renderBackupPanel();
 }
 
 async function runSearch(mode) {
@@ -573,6 +663,39 @@ function renderDashboardOverview() {
     : `<p class="meta">No activity yet.</p>`;
 }
 
+function renderSystemHealth() {
+  const target = document.getElementById("nas-health");
+  if (!target) return;
+  const health = state.health || {};
+  const counts = health.counts || {};
+  const scheduler = health.scheduler || {};
+  const telegram = health.telegram || {};
+  const issues = health.recent_issues || [];
+  target.innerHTML = `
+    <div class="health-card ${health.ok ? "ok" : "bad"}">
+      <span class="meta">NAS service</span>
+      <strong>${health.ok ? "Healthy" : "Needs attention"}</strong>
+      <small>${health.database?.mode || "store"} store / uptime ${formatDuration(health.uptime_seconds || 0)}</small>
+    </div>
+    <div class="health-card">
+      <span class="meta">Scheduler</span>
+      <strong>${scheduler.enabled ? "Active" : "Paused"}</strong>
+      <small>Next ${scheduler.nextRunAt ? formatDateTime(scheduler.nextRunAt) : "not scheduled"}</small>
+    </div>
+    <div class="health-card">
+      <span class="meta">Telegram</span>
+      <strong>${telegram.verified_at ? "Verified" : telegram.configured ? "Configured" : "Missing"}</strong>
+      <small>${telegram.last_error ? escapeHtml(telegram.last_error) : `${counts.queued_alerts || 0} queued / ${counts.unread_alerts || 0} unread`}</small>
+    </div>
+    <div class="health-card">
+      <span class="meta">Targets</span>
+      <strong>${counts.price_targets || 0}</strong>
+      <small>${counts.deals || 0} deals / ${counts.active_watches || 0} active watches</small>
+    </div>
+    ${issues.length ? `<div class="health-card wide"><span class="meta">Recent issues</span><strong>${escapeHtml(issues[0].title || issues[0].type || "Issue")}</strong><small>${escapeHtml(issues[0].detail || "")}</small></div>` : ""}
+  `;
+}
+
 function pipelineRow(listing, label, tone) {
   return `
     <article class="pipeline-row">
@@ -616,6 +739,38 @@ function renderSearch() {
         )
         .join("")
     : `<p class="meta">No searches yet.</p>`;
+}
+
+function renderSearchDiagnostics() {
+  const target = document.getElementById("search-diagnostics");
+  if (!target) return;
+  const diagnostics = state.diagnostics || {};
+  const jobs = diagnostics.hydration_jobs || [];
+  const errors = diagnostics.recent_errors || [];
+  const watches = diagnostics.watches || [];
+  const activeJob = jobs.find((job) => job.status === "running" || job.status === "queued");
+  target.innerHTML = `
+    <article>
+      <span class="meta">Last search</span>
+      <strong>${escapeHtml(diagnostics.last_search?.query || "None yet")}</strong>
+      <small>${diagnostics.last_search?.timestamp ? formatDateTime(diagnostics.last_search.timestamp) : "Run a search to collect scrape telemetry"}</small>
+    </article>
+    <article>
+      <span class="meta">Hydration</span>
+      <strong>${activeJob ? `${activeJob.completed || 0}/${activeJob.total || 0}` : "Idle"}</strong>
+      <small>${activeJob ? escapeHtml(activeJob.query || activeJob.id) : `${jobs.length} recent job records`}</small>
+    </article>
+    <article>
+      <span class="meta">Active monitors</span>
+      <strong>${watches.filter((watch) => watch.active).length}</strong>
+      <small>${watches.slice(0, 3).map((watch) => escapeHtml(watch.query)).join(", ") || "No monitors yet"}</small>
+    </article>
+    <article class="${errors.length ? "warn" : ""}">
+      <span class="meta">Recent errors</span>
+      <strong>${errors.length}</strong>
+      <small>${errors[0] ? escapeHtml(errors[0].detail || errors[0].title || errors[0].type) : "No scrape errors recorded"}</small>
+    </article>
+  `;
 }
 
 function renderFilters() {
@@ -672,9 +827,31 @@ function renderAlerts() {
 }
 
 function renderWatchlist() {
-  const terms = state.config.categoryPresets?.["Computers & Tech"] || [];
+  const presets = state.config.categoryPresets || {};
+  const selectedPreset = document.getElementById("preset-name")?.value || "Computers & Tech";
+  const terms = presets[selectedPreset] || presets["Computers & Tech"] || [];
   const presetForm = document.getElementById("preset-form");
-  if (presetForm) presetForm.elements.terms.value = terms.join(", ");
+  if (presetForm) {
+    const select = presetForm.elements.name;
+    if (select) {
+      const current = select.value || selectedPreset;
+      select.innerHTML = Object.keys(presets).sort().map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("");
+      select.value = presets[current] ? current : "Computers & Tech";
+    }
+    presetForm.elements.terms.value = termArray(presets[select?.value || selectedPreset] || terms).join(", ");
+  }
+  const quickList = document.getElementById("preset-quick-list");
+  if (quickList) {
+    quickList.innerHTML = Object.entries(presets).sort(([a], [b]) => a.localeCompare(b)).map(([name, presetTerms]) => `
+      <article class="preset-card">
+        <div>
+          <strong>${escapeHtml(name)}</strong>
+          <p class="meta">${termArray(presetTerms).slice(0, 6).map(escapeHtml).join(", ")}${termArray(presetTerms).length > 6 ? "..." : ""}</p>
+        </div>
+        <button data-add-preset-watch="${escapeHtml(name)}">Monitor</button>
+      </article>
+    `).join("");
+  }
   document.getElementById("watchlist-list").innerHTML = state.watchlist.length
     ? state.watchlist.map((watch) => `
       <article class="watch-card">
@@ -692,6 +869,26 @@ function renderWatchlist() {
       </article>
     `).join("")
     : `<p class="empty-state">No watched searches yet. Add one to let the scheduler look for restocks and deals.</p>`;
+}
+
+function renderPriceTargets() {
+  const target = document.getElementById("price-target-list");
+  if (!target) return;
+  target.innerHTML = state.priceTargets.length
+    ? state.priceTargets.map((item) => `
+      <article class="target-card">
+        <div>
+          <span class="badge ${item.active ? "good" : "info"}">${item.active ? "Active" : "Paused"}</span>
+          <h3>${escapeHtml(item.query)}</h3>
+          <p class="meta">Alert at or below ${formatMoney(item.target_price)}${item.updated_at ? ` / updated ${formatDateTime(item.updated_at)}` : ""}</p>
+        </div>
+        <div class="actions">
+          <button data-toggle-target="${escapeHtml(item.id)}">${item.active ? "Pause" : "Activate"}</button>
+          <button data-delete-target="${escapeHtml(item.id)}">Delete</button>
+        </div>
+      </article>
+    `).join("")
+    : `<p class="empty-state compact-empty">No price targets yet. Add one for things like "rtx 3070 under S$300".</p>`;
 }
 
 function renderActivity() {
@@ -791,6 +988,16 @@ function renderDigestEmail() {
     <div><span class="meta">Source</span><strong>${escapeHtml(digest.source || "local config")}</strong></div>
     <div><span class="meta">Sends when</span><strong>Enabled searches have qualifying 24h deals</strong></div>
     ${missing}
+  `;
+}
+
+function renderBackupPanel() {
+  const target = document.getElementById("backup-status");
+  if (!target) return;
+  target.innerHTML = `
+    <div><span class="meta">Included</span><strong>Watchlist, filters, presets</strong></div>
+    <div><span class="meta">Protected</span><strong>Telegram and email secrets stay local</strong></div>
+    <div><span class="meta">Last loaded</span><strong>${formatDateTime(new Date().toISOString())}</strong></div>
   `;
 }
 
@@ -1002,16 +1209,25 @@ function scoreExplanation(listing) {
   const explanation = listing.score?.explanation;
   if (!explanation) return "";
   const components = explanation.components || {};
+  const insight = listing.market_insight || {};
+  const reasons = (explanation.reasons || []).slice(0, 3);
+  const negotiation = explanation.estimated_negotiation_price ? `<span>Negotiate ${formatMoney(explanation.estimated_negotiation_price)}</span>` : "";
+  const median = insight.median_price ? `<span>Median ${formatMoney(insight.median_price)}</span>` : "";
+  const delta = insight.price_delta_percent !== null && insight.price_delta_percent !== undefined ? `<span>${Number(insight.price_delta_percent)}% vs market</span>` : "";
   return `
     <details class="score-explanation">
       <summary>Why this score?</summary>
       <p>${escapeHtml(explanation.summary || "")}</p>
       <div class="explanation-chips">
+        <span>Price ${Number(components.price || 0)}</span>
         <span>Seller ${Number(components.seller || 0)}</span>
         <span>Age ${Number(components.age || 0)}</span>
-        <span>Detail ${Number(components.detail || 0)}</span>
-        <span>Penalty ${Number(components.penalty || 0)}</span>
+        <span>Market ${Number(components.market || 0)}</span>
+        ${median}
+        ${delta}
+        ${negotiation}
       </div>
+      ${reasons.length ? `<ul class="explanation-reasons">${reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>` : ""}
     </details>
   `;
 }
@@ -1169,6 +1385,19 @@ function getListingAgeHours(listing) {
 
 function formatDateTime(value) {
   return value ? new Date(value).toLocaleString() : "Never";
+}
+
+function formatDuration(seconds) {
+  const value = Number(seconds || 0);
+  if (value < 60) return `${Math.round(value)}s`;
+  if (value < 3600) return `${Math.round(value / 60)}m`;
+  if (value < 86400) return `${Math.round(value / 3600)}h`;
+  return `${Math.round(value / 86400)}d`;
+}
+
+function termArray(value) {
+  if (Array.isArray(value)) return value;
+  return String(value || "").split(/[\n,]/).map((item) => item.trim()).filter(Boolean);
 }
 
 async function checkedJson(response) {

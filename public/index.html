@@ -82,6 +82,15 @@
           </div>
           <div id="stats" class="stats dashboard-stats"></div>
           <div id="scheduler-widget" class="scheduler-widget"></div>
+          <section class="dashboard-panel health-panel-wide">
+            <div class="section-bar flush">
+              <div>
+                <h3>NAS Health</h3>
+                <p class="section-caption">Runtime, scheduler, Telegram, and target status.</p>
+              </div>
+            </div>
+            <div id="nas-health" class="health-grid health-grid-wide"></div>
+          </section>
           <div class="dashboard-panels">
             <section class="dashboard-panel panel-primary">
               <div class="section-bar flush">
@@ -138,6 +147,7 @@
             <button type="button" id="search-more">Search more</button>
           </form>
           <div id="search-summary" class="notice"></div>
+          <div id="search-diagnostics" class="diagnostics-grid" aria-label="Search diagnostics"></div>
           <div id="search-results" class="grid"></div>
           <h3>Recent Searches</h3>
           <div id="search-history" class="table"></div>
@@ -193,16 +203,30 @@
             <input name="category" placeholder="Category" aria-label="Category">
             <button>Add watch</button>
           </form>
+          <div id="preset-quick-list" class="preset-grid" aria-label="Category preset quick monitors"></div>
+          <div class="preset-panel">
+            <div>
+              <p class="eyebrow">Price targets</p>
+              <h3>Ping me below a price</h3>
+            </div>
+            <form id="price-target-form" class="preset-form">
+              <input name="query" placeholder="rtx 3070" required aria-label="Price target query">
+              <input name="target_price" type="number" min="1" step="1" placeholder="Under S$" required aria-label="Target price">
+              <button type="submit">Add target</button>
+            </form>
+            <div id="price-target-list" class="target-grid"></div>
+          </div>
           <div class="preset-panel">
             <div>
               <p class="eyebrow">Category preset</p>
-              <h3>Computers & Tech terms</h3>
+              <h3>Preset terms</h3>
             </div>
             <form id="preset-form" class="preset-form">
+              <select id="preset-name" name="name" aria-label="Preset name"></select>
               <textarea name="terms" rows="4" aria-label="Computers and Tech preset terms" placeholder="gaming pc, gpu, rtx"></textarea>
               <button type="submit">Save preset</button>
             </form>
-            <p class="meta">Used by /watch Computers & Tech and the Watchlist form.</p>
+            <p class="meta">Used by /watch, one-click preset monitors, and the Watchlist form.</p>
           </div>
           <div id="watchlist-list" class="watchlist-grid"></div>
         </section>
@@ -269,6 +293,13 @@
           <div class="training-panel">
             <div id="digest-email-status" class="training-stats"></div>
             <button id="digest-email-test" type="button">Send test email</button>
+          </div>
+          <h3>Backup & Restore</h3>
+          <div class="training-panel">
+            <div id="backup-status" class="training-stats"></div>
+            <button type="button" data-export-config="true">Export backup</button>
+            <input id="backup-import-file" type="file" accept="application/json,.json" aria-label="Backup JSON file">
+            <button type="button" data-import-config="true">Import backup</button>
           </div>
           <h3>Blocked Sellers</h3>
           <div id="sellers" class="table"></div>

@@ -738,7 +738,12 @@ function parsePayload(value) {
 
 function withConfigDefaults(config) {
   const defaultCategoryPresets = {
-    "Computers & Tech": ["gaming pc", "gpu", "rtx", "lian li", "pc case", "monitor", "ssd", "motherboard"]
+    "Computers & Tech": ["gaming pc", "gpu", "rtx", "lian li", "pc case", "monitor", "ssd", "motherboard"],
+    "GPU Deals": ["rtx 3070", "rtx 3080", "rtx 4070", "rtx 4080", "graphics card", "gpu"],
+    "Full PCs": ["gaming pc", "rtx pc", "custom pc", "mini itx pc", "sff pc"],
+    "Cases & Cooling": ["lian li", "pc case", "aio cooler", "case fans", "noctua", "thermaltake"],
+    "Monitors": ["gaming monitor", "144hz monitor", "240hz monitor", "ultrawide monitor", "4k monitor"],
+    "Storage": ["ssd", "nvme", "m.2", "hard disk", "nas drive"]
   };
   return {
     ...(config || {}),
@@ -746,6 +751,7 @@ function withConfigDefaults(config) {
       ...defaultCategoryPresets,
       ...(config?.categoryPresets || {})
     },
+    priceTargets: Array.isArray(config?.priceTargets) ? config.priceTargets : [],
     imageCache: {
       enabled: true,
       maxAgeDays: 14,

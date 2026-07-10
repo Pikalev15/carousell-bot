@@ -552,11 +552,39 @@ main {
   grid-template-columns: 1fr;
 }
 
+.health-panel-wide {
+  min-height: 0;
+  margin: 0 0 18px;
+}
+
+.health-grid-wide {
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+}
+
 .health-grid div {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
   background: #0d0f12;
+}
+
+.health-grid div.ok {
+  border-color: color-mix(in srgb, var(--brand) 36%, var(--line));
+  background:
+    linear-gradient(120deg, var(--brand-soft), transparent 58%),
+    var(--control-subtle);
+}
+
+.health-grid div.bad,
+.diagnostics-grid article.warn {
+  border-color: color-mix(in srgb, var(--red) 42%, var(--line));
+  background:
+    linear-gradient(120deg, var(--red-soft), transparent 58%),
+    var(--control-subtle);
+}
+
+.health-grid div.wide {
+  grid-column: 1 / -1;
 }
 
 .health-grid strong {
@@ -1016,6 +1044,15 @@ main {
   font-size: 12px;
 }
 
+.explanation-reasons {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .score-meter {
   overflow: hidden;
   height: 6px;
@@ -1116,6 +1153,42 @@ main {
   margin-bottom: 18px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.diagnostics-grid,
+.preset-grid,
+.target-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin: 12px 0 18px;
+}
+
+.diagnostics-grid article,
+.preset-card,
+.target-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 13px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+    var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.diagnostics-grid strong,
+.preset-card strong,
+.target-card strong {
+  color: var(--ink);
+}
+
+.diagnostics-grid small,
+.target-card .meta,
+.preset-card .meta {
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 input,
@@ -1253,9 +1326,15 @@ select:focus {
 
 .preset-form {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(150px, 0.35fr) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
+}
+
+.preset-form input,
+.preset-form select,
+.preset-form textarea {
+  width: 100%;
 }
 
 .preset-form textarea {
@@ -1272,6 +1351,27 @@ select:focus {
 .preset-form textarea:focus {
   outline: 2px solid var(--brand-soft);
   border-color: rgba(255, 90, 95, 0.52);
+}
+
+.target-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.target-card h3 {
+  margin: 8px 0 4px;
+  color: var(--ink);
+  font-size: 16px;
+  text-transform: none;
+}
+
+#backup-import-file {
+  max-width: 260px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 9px;
+  color: var(--muted);
+  background: var(--control);
 }
 
 .variant-list {

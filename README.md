@@ -49,6 +49,7 @@ Important limitations:
 - Carousell start-URL parsing and multi-URL searches
 - Cached listing views and optional performance logging
 - Docker and NAS deployment files
+- Private remote access notes through Tailscale: [docs/TAILSCALE-ACCESS.md](docs/TAILSCALE-ACCESS.md)
 
 ## Requirements
 

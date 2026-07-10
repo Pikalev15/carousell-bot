@@ -24,6 +24,8 @@ export const TELEGRAM_COMMANDS = [
   { command: "search", description: "Search Carousell: /search gpu" },
   { command: "watch", description: "Monitor a query or category" },
   { command: "unwatch", description: "Pause a monitor" },
+  { command: "target", description: "Alert under a price: /target gpu under 300" },
+  { command: "targets", description: "List price targets" },
   { command: "status", description: "Show scheduler and monitors" },
   { command: "deals", description: "Show current top deals" },
   { command: "settings", description: "Tune Telegram alerts and quiet hours" },
@@ -218,15 +220,16 @@ export function alertInlineKeyboard(alert = {}) {
   const rows = [];
   if (alert.listing_url) rows.push([{ text: "Open", url: alert.listing_url }]);
   rows.push([
-    { text: "Good", callback_data: `cb:good:${id}` },
-    { text: "Bad deal", callback_data: `cb:bad_deal:${id}` },
-    { text: "Spam", callback_data: `cb:spam:${id}` }
+    { text: "Worth viewing", callback_data: `cb:worth:${id}` },
+    { text: "Too expensive", callback_data: `cb:too_expensive:${id}` },
+    { text: "Not relevant", callback_data: `cb:not_relevant:${id}` }
   ]);
   rows.push([
-    { text: "Train more", callback_data: `cb:train:${id}` },
+    { text: "Spam", callback_data: `cb:spam:${id}` },
     { text: "Block seller", callback_data: `cb:block:${id}` },
     { text: "Watch similar", callback_data: `cb:watch:${id}` }
   ]);
+  rows.push([{ text: "Train more", callback_data: `cb:train:${id}` }]);
   return { inline_keyboard: rows };
 }
 

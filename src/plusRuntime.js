@@ -23,12 +23,20 @@ import {
 
 const TELEGRAM_RATING_ALIASES = new Map([
   ["good", "good_deal"],
+  ["worth", "good_deal"],
+  ["worth_viewing", "good_deal"],
   ["bad", "bad_deal"],
+  ["bad_deal", "bad_deal"],
+  ["too_expensive", "overpriced"],
+  ["overpriced", "overpriced"],
   ["spam", "spam"],
+  ["not_relevant", "irrelevant"],
+  ["irrelevant", "irrelevant"],
   ["wtb", "wtb_service"],
   ["service", "wtb_service"],
   ["accessory", "accessory_only"],
   ["wrongcat", "wrong_category"],
+  ["wrong_category", "wrong_category"],
   ["dupe", "duplicate_listing"]
 ]);
 

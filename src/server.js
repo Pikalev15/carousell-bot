@@ -19,6 +19,7 @@ import {
   deleteWatchedSearch,
   getActivity,
   getAlerts,
+  getDatabase,
   getPriceHistory,
   getState,
   getWatchedSearch,
@@ -154,6 +155,16 @@ async function callOriginalJson(method, url, body) {
 async function handleApi(request, response, url) {
   if (request.method === "GET" && url.pathname === "/api/health") {
     sendJson(response, 200, { ok: true });
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/system/health") {
+    sendJson(response, 200, await systemHealthSnapshot());
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/search/diagnostics") {
+    sendJson(response, 200, await searchDiagnosticsSnapshot());
     return;
   }
 
@@ -421,6 +432,43 @@ async function handleApi(request, response, url) {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/api/price-targets") {
+    sendJson(response, 200, listPriceTargets(await readJson("config")));
+    return;
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/price-targets") {
+    const body = await readBody(request);
+    const target = await upsertPriceTarget(body);
+    if (body.watch !== false) {
+      upsertWatchedSearch({
+        query: target.query,
+        price_ceiling: target.target_price,
+        category: "price target",
+        kind: "query",
+        active: target.active
+      });
+    }
+    sendJson(response, 201, target);
+    return;
+  }
+
+  if (request.method === "PATCH" && url.pathname.startsWith("/api/price-targets/")) {
+    const id = url.pathname.split("/").pop();
+    sendJson(response, 200, await upsertPriceTarget({ ...(await readBody(request)), id }));
+    return;
+  }
+
+  if (request.method === "DELETE" && url.pathname.startsWith("/api/price-targets/")) {
+    const id = url.pathname.split("/").pop();
+    const config = await readJson("config");
+    const targets = listPriceTargets(config);
+    const next = targets.filter((target) => String(target.id) !== String(id));
+    await writeJson("config", { ...config, priceTargets: next });
+    sendJson(response, 200, { removed: targets.length - next.length });
+    return;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/watchlist") {
     const body = await readBody(request);
     const preset = await categoryPreset(body.query || body.category);
@@ -530,6 +578,79 @@ async function handleApi(request, response, url) {
   }
 
   sendJson(response, 404, { error: "Not found" });
+}
+
+async function systemHealthSnapshot() {
+  const state = await getState();
+  const db = getDatabase();
+  const alerts = getAlerts({ limit: 300 });
+  const watches = await getWatchedSearches();
+  const activity = getActivity(60);
+  const schedulerStatus = scheduler.status(state.config);
+  let database = { mode: db ? "sqlite" : "json", ok: true, error: "" };
+  if (db) {
+    try {
+      db.prepare("PRAGMA database_list").all();
+    } catch (error) {
+      database = { ...database, ok: false, error: error.message };
+    }
+  }
+
+  return {
+    ok: database.ok,
+    timestamp: new Date().toISOString(),
+    uptime_seconds: Math.round(process.uptime()),
+    database,
+    scheduler: schedulerStatus,
+    telegram: {
+      enabled: Boolean(state.config.telegram?.enabled),
+      configured: Boolean(state.config.telegram?.botToken && state.config.telegram?.chatId),
+      status: state.config.telegram?.status || "missing",
+      verified_at: state.config.telegram?.verifiedAt || null,
+      last_error: state.config.telegram?.lastError || ""
+    },
+    counts: {
+      listings: state.listings.length,
+      deals: buildListings(state, "", { includeFiltered: false }).filter((listing) => listing.score?.is_deal).length,
+      watches: watches.length,
+      active_watches: watches.filter((watch) => watch.active).length,
+      price_targets: listPriceTargets(state.config).length,
+      unread_alerts: alerts.filter((alert) => !alert.read_at).length,
+      queued_alerts: alerts.filter(isQueuedTelegramAlert).length,
+      failed_alerts: alerts.filter((alert) => alert.error).length
+    },
+    recent_issues: activity
+      .filter((item) => /error|failed|readonly|limit|challenge/i.test(`${item.type || ""} ${item.title || ""} ${item.detail || ""}`))
+      .slice(0, 6)
+  };
+}
+
+async function searchDiagnosticsSnapshot() {
+  const state = await getState();
+  const activity = getActivity(120);
+  const watches = await getWatchedSearches();
+  const scrapeEvents = activity.filter((item) => /search|scrape|hydrate|scheduler|price_drop|notification/i.test(`${item.type || ""} ${item.title || ""}`));
+  const lastSearch = state.searches?.[0] || null;
+  return {
+    last_search: lastSearch,
+    recent_searches: (state.searches || []).slice(0, 8),
+    hydration_jobs: [...searchJobs.values()].slice(-8).reverse(),
+    scheduler: scheduler.status(state.config),
+    watches: watches.map((watch) => ({
+      id: watch.id,
+      query: watch.query,
+      active: watch.active,
+      kind: watch.kind || "query",
+      terms: watchTerms(watch, state.config),
+      last_run_at: watch.last_run_at || null,
+      last_result_count: watch.last_result_count ?? null,
+      muted_until: watch.muted_until || null
+    })),
+    recent_events: scrapeEvents.slice(0, 12),
+    recent_errors: activity
+      .filter((item) => /error|failed|challenge|limit|zero_results|low_results/i.test(`${item.type || ""} ${item.title || ""} ${item.detail || ""}`))
+      .slice(0, 8)
+  };
 }
 
 function buildListings(state, query = "", options = {}) {
@@ -1114,8 +1235,18 @@ async function handleSearchAlerts({ additions, priceDrops, query, options }) {
   const threshold = Number(state.config.dealThreshold || 70);
   const watch = options.watch || null;
   const addedBuilt = buildListings({ ...state, listings: additions }, "", { includeFiltered: false });
+  const targets = listPriceTargets(state.config);
 
   for (const listing of addedBuilt) {
+    for (const target of matchingPriceTargets(listing, targets)) {
+      if (getListingAgeHours(listing) > 72) continue;
+      await emitAlert(listingAlertPayload(listing, {
+        type: "price_target",
+        watch_id: watch?.id || null,
+        alert_key: alertKey({ type: "price_target", listing_id: listing.id, watch_id: `target-${target.id}` }),
+        reason: `Price target hit: ${target.query} under ${formatMoney(target.target_price)}`
+      }));
+    }
     if (Number(listing.score?.deal_score || 0) < threshold) continue;
     if (watch?.price_ceiling && Number(listing.current_price || 0) > Number(watch.price_ceiling)) continue;
     if (getListingAgeHours(listing) > 48) continue;
@@ -1128,6 +1259,18 @@ async function handleSearchAlerts({ additions, priceDrops, query, options }) {
   }
 
   for (const drop of priceDrops) {
+    const builtDrop = buildListings({ ...state, listings: [drop.listing] }, "", { includeFiltered: false })[0] || drop.listing;
+    for (const target of matchingPriceTargets(builtDrop, targets)) {
+      if (Number(drop.newPrice || 0) <= Number(target.target_price || 0)) {
+        await emitAlert(listingAlertPayload(builtDrop, {
+          type: "price_target",
+          message: `${formatMoney(drop.oldPrice)} -> ${formatMoney(drop.newPrice)} hit ${target.query}`,
+          watch_id: watch?.id || null,
+          alert_key: alertKey({ type: "price_target", listing_id: builtDrop.id, watch_id: `target-${target.id}`, price: drop.newPrice }),
+          reason: `Price target hit after drop from ${formatMoney(drop.oldPrice)}`
+        }));
+      }
+    }
     await emitAlert(listingAlertPayload(drop.listing, {
       type: "price_drop",
       message: `${formatMoney(drop.oldPrice)} -> ${formatMoney(drop.newPrice)} from ${query}`,
@@ -1208,6 +1351,8 @@ async function handleCoreTelegramCommand(text) {
       "/search <query> - fast search and show top results",
       "/watch <category-or-query> - monitor every 30 minutes",
       "/unwatch <name> - pause a monitor",
+      "/target <query> under <price> - alert when a matching listing is cheap",
+      "/targets - list price targets",
       "/status - scheduler and monitor status",
       "/deals - current top deal candidates"
     ].join("\n");
@@ -1246,6 +1391,23 @@ async function handleCoreTelegramCommand(text) {
     return `Paused monitor: ${watch.query}`;
   }
 
+  if (command === "/target") {
+    const parsed = parseTelegramTargetArgs(args);
+    if (!parsed) return "Usage: /target gpu under 300";
+    const target = await upsertPriceTarget({ query: parsed.query, target_price: parsed.target_price, active: true });
+    upsertWatchedSearch({ query: target.query, price_ceiling: target.target_price, category: "price target", kind: "query", active: true });
+    const config = await readJson("config");
+    await scheduler.configure({ enabled: true, intervalMinutes: config.scheduler?.intervalMinutes || 30, jitterSeconds: config.scheduler?.jitterSeconds || 45 });
+    return `Price target saved: ${target.query} under ${formatMoney(target.target_price)}. Scheduler is active.`;
+  }
+
+  if (command === "/targets") {
+    const targets = listPriceTargets((await getState()).config);
+    return targets.length
+      ? ["Price targets:", ...targets.slice(0, 12).map((target) => `- ${target.active ? "on" : "paused"} ${target.query} under ${formatMoney(target.target_price)}`)].join("\n")
+      : "No price targets yet. Use /target gpu under 300.";
+  }
+
   if (command === "/status") {
     return telegramStatusMessage(await getState());
   }
@@ -1273,6 +1435,7 @@ async function telegramStatusMessage(state) {
   const recentErrors = getActivity(30).filter((item) => /error|failed|limit/i.test(`${item.type || ""} ${item.title || ""}`)).slice(0, 3);
   const telegram = config.telegram || {};
   const alertSettings = telegramAlertSettings(config);
+  const priceTargets = listPriceTargets(config);
   const deals = buildListings(state, "", { includeFiltered: false }).filter((listing) => listing.score?.is_deal);
   const cleanListings = buildListings(state, "", { includeFiltered: false });
 
@@ -1291,6 +1454,7 @@ async function telegramStatusMessage(state) {
     `- Active: ${activeWatches.length} (${runnableWatches.length} runnable, ${mutedWatches.length} muted)`,
     `- Total saved: ${watches.length}`,
     formatWatchStatusLines(runnableWatches, config),
+    priceTargets.length ? `- Price targets: ${priceTargets.filter((target) => target.active).length}/${priceTargets.length} active (${priceTargets.slice(0, 4).map((target) => `${target.query} < ${formatMoney(target.target_price)}`).join(", ")})` : "- Price targets: none",
     mutedWatches.length ? `- Muted: ${mutedWatches.map((watch) => watch.query).slice(0, 5).join(", ")}` : "",
     "",
     "Alerts",
@@ -1351,6 +1515,16 @@ function formatListingLines(listings) {
     .join("\n");
 }
 
+function parseTelegramTargetArgs(args = "") {
+  const text = String(args || "").trim();
+  const match = text.match(/^(.+?)\s+(?:under|below|<=|<|at)\s*S?\$?(\d+(?:\.\d+)?)$/i) || text.match(/^(.+?)\s+S?\$?(\d+(?:\.\d+)?)$/i);
+  if (!match) return null;
+  const query = match[1].trim();
+  const targetPrice = Number(match[2]);
+  if (!query || !Number.isFinite(targetPrice) || targetPrice <= 0) return null;
+  return { query, target_price: Math.round(targetPrice) };
+}
+
 function rankTelegramSearchResults(listings = [], query = "") {
   const ranked = listings
     .map((listing) => ({ listing, relevance: telegramSearchRelevance(listing, query) }))
@@ -1384,6 +1558,60 @@ async function categoryPreset(value) {
   return categoryPresetFromConfig(value, await readJson("config"));
 }
 
+function listPriceTargets(config = {}) {
+  return (Array.isArray(config.priceTargets) ? config.priceTargets : [])
+    .map(normalizePriceTarget)
+    .filter((target) => target.query && Number(target.target_price || 0) > 0);
+}
+
+async function upsertPriceTarget(input = {}) {
+  const config = await readJson("config");
+  const targets = listPriceTargets(config);
+  const incoming = normalizePriceTarget(input);
+  if (!incoming.query || Number(incoming.target_price || 0) <= 0) {
+    throw new Error("query and target_price are required");
+  }
+  const id = incoming.id || `pt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const existing = targets.find((target) => String(target.id) === String(id));
+  const nextTarget = {
+    ...(existing || {}),
+    ...incoming,
+    id,
+    active: input.active === undefined ? existing?.active ?? true : Boolean(input.active),
+    created_at: existing?.created_at || new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  const nextTargets = targets.filter((target) => String(target.id) !== String(id));
+  nextTargets.unshift(nextTarget);
+  await writeJson("config", { ...config, priceTargets: nextTargets });
+  return nextTarget;
+}
+
+function normalizePriceTarget(input = {}) {
+  return {
+    id: input.id || "",
+    query: String(input.query || "").trim(),
+    target_price: Number(input.target_price ?? input.price ?? input.price_ceiling ?? 0),
+    active: input.active === undefined ? true : Boolean(input.active),
+    notes: String(input.notes || "").trim(),
+    created_at: input.created_at || null,
+    updated_at: input.updated_at || null
+  };
+}
+
+function matchingPriceTargets(listing, targets = []) {
+  const price = Number(listing.current_price || 0);
+  if (price <= 0) return [];
+  return targets.filter((target) => target.active && price <= Number(target.target_price || 0) && listingMatchesTarget(listing, target));
+}
+
+function listingMatchesTarget(listing, target) {
+  const tokens = normalizeText(target.query).split(/\s+/).filter((token) => token.length > 1);
+  if (!tokens.length) return false;
+  const text = normalizeText(`${listing.title || ""} ${listing.description || ""} ${listing.category || ""}`);
+  return tokens.every((token) => text.includes(token));
+}
+
 function categoryPresetFromConfig(value, config = {}) {
   const key = String(value || "").trim().toLowerCase();
   const presets = config.categoryPresets || {};
@@ -1401,9 +1629,19 @@ async function handleTelegramCallback(callback) {
   const listing = listings.find((item) => Number(item.id) === listingId);
   if (!listing) return "Listing not found";
 
-  if (["good", "bad_deal", "spam"].includes(callback.action)) {
-    await saveListingLabel(listingId, callback.action, { asked_price: listing.current_price });
-    return `Marked ${callback.action.replace("_", " ")}`;
+  const ratingAliases = {
+    good: "good",
+    worth: "good",
+    worth_viewing: "good",
+    bad_deal: "bad_deal",
+    too_expensive: "bad_deal",
+    not_relevant: "skip",
+    spam: "spam"
+  };
+  if (ratingAliases[callback.action]) {
+    const rating = ratingAliases[callback.action];
+    await saveListingLabel(listingId, rating, { asked_price: listing.current_price });
+    return `Marked ${rating.replace("_", " ")}`;
   }
 
   if (callback.action === "block") {
