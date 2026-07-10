@@ -5,22 +5,49 @@ import { spawnSync } from "node:child_process";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const serverPlusSource = await readFile(new URL("../src/server-plus.js", import.meta.url), "utf8");
+const serverUnifiedSource = await readFile(new URL("../src/server-unified.js", import.meta.url), "utf8");
+const plusRuntimeSource = await readFile(new URL("../src/plusRuntime.js", import.meta.url), "utf8");
 const carousellSearchSource = await readFile(new URL("../src/carousellSearch.js", import.meta.url), "utf8");
 const refinedFeedbackSource = await readFile(new URL("../public/refined-feedback.js", import.meta.url), "utf8");
 const notificationCss = await readFile(new URL("../public/notification-detail.css", import.meta.url), "utf8");
 
-test("default npm runtime uses plus server", () => {
-  assert.equal(packageJson.scripts.start, "node src/server-plus.js");
-  assert.equal(packageJson.scripts.dev, "node src/server-plus.js");
+test("default npm runtime uses unified server", () => {
+  assert.equal(packageJson.scripts.start, "node src/server-unified.js");
+  assert.equal(packageJson.scripts.dev, "node src/server-unified.js");
   assert.equal(packageJson.scripts["start:core"], "node src/server.js");
-  assert.equal(packageJson.scripts["start:plus"], "node src/server-plus.js");
+  assert.equal(packageJson.scripts["start:plus"], "node src/server-unified.js");
 });
 
-test("plus server entrypoint has valid syntax", () => {
+test("unified server entrypoint has valid syntax", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/server-unified.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("plus server shim has valid syntax", () => {
   const result = spawnSync(process.execPath, ["--check", "src/server-plus.js"], {
     encoding: "utf8"
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(serverPlusSource, /\.\/server-unified\.js/);
+  assert.match(serverPlusSource, /startServer/);
+});
+
+test("plus runtime installer has valid syntax", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/plusRuntime.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(plusRuntimeSource, /installPlusRuntime/);
+  assert.match(plusRuntimeSource, /markAllAlertsRead/);
+  assert.match(plusRuntimeSource, /searchDiagnosticsPayload/);
+});
+
+test("unified runtime installs plus routes and preserves scheduler replay", () => {
+  assert.match(serverUnifiedSource, /installPlusRuntime/);
+  assert.match(serverUnifiedSource, /callOriginalJson/);
+  assert.match(serverUnifiedSource, /dashboardAuthHeaders/);
 });
 
 test("batch feature helper has valid syntax", () => {
@@ -88,11 +115,6 @@ test("likes UI script has valid syntax", () => {
     encoding: "utf8"
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
-});
-
-test("plus runtime replays JSON request bodies as buffers", () => {
-  assert.match(serverPlusSource, /Readable\.from\(\[Buffer\.from\(JSON\.stringify\(body \|\| \{\}\)\)\]\)/);
-  assert.match(serverPlusSource, /chunks\.push\(typeof chunk === "string" \? Buffer\.from\(chunk\) : chunk\)/);
 });
 
 test("UI guards placeholder prices and enables alert scrolling", () => {
