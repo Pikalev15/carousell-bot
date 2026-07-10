@@ -42,36 +42,56 @@ export class SearchScheduler {
 
   async runNow() {
     if (this.running) return { ...this.status(await readJson("config")), running: true };
-    const config = await readJson("config");
+
+    const runConfig = await readJson("config");
     this.running = true;
     const startedAt = new Date().toISOString();
     addActivity({ type: "scrape_run", title: "Scheduler run started", detail: "Running active watched searches", timestamp: startedAt });
+
     try {
       const watches = (await getWatchedSearches()).filter((watch) => watch.active && !isWatchMuted(watch));
       const results = [];
+
       for (const watch of watches) {
-        await delay(randomJitter(config.scheduler?.jitterSeconds));
-        const result = await this.runWatchedSearch(watch);
-        results.push(result);
-        await checkScrapeHealth(watch, result, config).catch((error) => {
-          addActivity({ type: "scrape_health_error", title: "Scrape health check failed", detail: error.message, watch_id: watch.id });
-        });
+        await delay(randomJitter(runConfig.scheduler?.jitterSeconds));
+        try {
+          const result = await this.runWatchedSearch(watch);
+          results.push({ watch_id: watch.id, ok: true, ...result });
+          await checkScrapeHealth(watch, result, runConfig).catch((error) => {
+            addActivity({ type: "scrape_health_error", title: "Scrape health check failed", detail: error.message, watch_id: watch.id });
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          results.push({ watch_id: watch.id, ok: false, error: message });
+          addActivity({
+            type: "scrape_error",
+            title: `Watched search failed: ${watch.query}`,
+            detail: message,
+            watch_id: watch.id
+          });
+        }
       }
+
       this.lastRunAt = new Date().toISOString();
+      const failed = results.filter((result) => !result.ok).length;
       addActivity({
         type: "scrape_run",
         title: "Scheduler run finished",
-        detail: `${watches.length} watched searches checked`,
+        detail: `${watches.length} watched searches checked; ${failed} failed`,
         timestamp: this.lastRunAt
       });
+
+      // Re-read before writing so settings changed during a long scrape are not overwritten.
+      const latestConfig = await readJson("config");
       await writeJson("config", {
-        ...config,
+        ...latestConfig,
         scheduler: {
-          ...config.scheduler,
+          ...latestConfig.scheduler,
           lastRunAt: this.lastRunAt
         }
       });
-      return { results, ...this.status(await readJson("config")) };
+
+      return { results, failed, ...this.status(await readJson("config")) };
     } finally {
       this.running = false;
       const latest = await readJson("config");
@@ -108,7 +128,12 @@ export class SearchScheduler {
 async function checkScrapeHealth(watch, result, config) {
   const settings = config.scrapeHealthCheck || {};
   if (settings.enabled === false) return;
-  const current = Number(result.result_count ?? result.results_count ?? result.added + result.updated ?? 0);
+  if (result?.status && !["success", "partial"].includes(result.status)) return;
+
+  const fallbackCount = Number(result?.added || 0) + Number(result?.updated || 0);
+  const current = Number(result?.result_count ?? result?.results_count ?? fallbackCount);
+  if (!Number.isFinite(current) || current < 0) return;
+
   const previous = Number(watch.last_result_count ?? 0);
   const minPrevious = clampNumber(settings.minPreviousResults ?? 5, 1, 10000);
   const minRatio = Math.max(0, Math.min(1, Number(settings.minResultRatio ?? 0.2)));

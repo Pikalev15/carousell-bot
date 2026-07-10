@@ -1,281 +1,643 @@
 # Carousell Bot
 
-A local-first Carousell deal finder for people who are tired of scrolling through noisy listings.
+A local-first Carousell Singapore search, deal-ranking, watchlist, alerting, and marketplace-analysis dashboard.
 
-This started as a small PC-testing prototype for hunting good second-hand deals, especially hardware listings, before eventually moving it to a NAS. It runs a small web dashboard on your own machine, searches Carousell with Playwright, saves listings locally, and tries to separate actual deals from spam, WTB posts, bait prices, accessories, duplicates, and annoying sellers.
+Carousell Bot is designed for people who want to monitor second-hand listings without repeatedly scrolling through noisy search results. It searches Carousell through Playwright, stores observations locally, removes common junk, ranks likely deals, tracks changes over time, and learns from manual feedback.
 
-It is not trying to be a polished SaaS app. It is more like a personal marketplace command center that you can tweak as your own buying habits change.
+The project is intended for personal local or LAN use. It is not a hosted SaaS service and should not be exposed directly to the public internet.
 
-## What it does
+## Highlights
 
-- Searches Carousell Singapore from a local web dashboard
-- Uses the full `playwright` package and its bundled Chromium install
-- Saves local app state under `data/`
-- Scores listings based on price, condition, age, seller signal, listing detail, relevance, and learned preference
-- Filters out WTB / looking-for posts, spammy listings, bait prices, blocked phrases, and blocked sellers
-- Lets you add phrase rules and seller blacklist entries from the UI
-- Tracks watched searches and can run them on a scheduler
-- Shows alerts, activity history, export routes, and deal candidates in the dashboard
-- Supports Telegram notifications for deal alerts and scrape-health warnings
-- Sends an optional daily Gmail SMTP Top Deals digest with deal, risk, and final ranking scores
-- Lets you label listings so the training model can learn what you usually skip or like
+- Playwright-powered Carousell search using bundled Chromium
+- Browser dashboard for search, review, filtering, and training
+- SQLite-first storage with automatic JSON migration and JSON fallback
+- Listing classification and multi-factor deal scoring
+- Confidence scores, risk flags, penalties, and negotiation estimates
+- Watched searches with configurable scheduler and jitter
+- Telegram deal alerts, scrape-health warnings, commands, and training buttons
+- Optional daily Gmail SMTP deal digest
+- Listing detail hydration and data-enrichment tools
+- Price history and duplicate-aware merged price history
+- Duplicate grouping with manual merge and split overrides
+- Seller blacklist and seller reputation history
+- Listing snoozing and watched-search muting
+- Refined feedback labels and preference-model retraining
+- Rolling category median auto-tuning
+- Search history, alert history, and activity logs
+- CSV and JSON export routes
+- Import/export bundles for backup and migration
+- Carousell start-URL parsing and multi-URL searches
+- Cached listing views and optional performance logging
+- Docker and NAS deployment files
 
 ## Current status
 
-This is still an MVP. The main flow works locally, but the project is intentionally simple right now:
+The application is a feature-rich personal prototype rather than a finished public service.
 
-- Storage prefers SQLite when `node:sqlite` is available; JSON files are the fallback/bootstrap path
-- The scraper depends on Carousell's current frontend structure, so it may break if their site changes
-- It is meant for personal local/LAN use, not public hosting
-- The UI is functional, but not final
+The core search, storage, scoring, dashboard, scheduler, alerting, training, export, and NAS flows are implemented. The main remaining engineering work is making scraper health more explicit, improving product identity and comparable pricing, strengthening lifecycle tracking, and adding broader regression coverage.
+
+Important limitations:
+
+- Carousell can change its frontend or anti-automation behavior at any time.
+- A successful HTTP request does not always mean the page contained valid search results.
+- Deal scores depend on the quality of extracted price, model, condition, seller, and market data.
+- Seller ratings and other detail fields may be unavailable until hydration succeeds.
+- SQLite is preferred, but some fallback behavior remains JSON-based.
+- This project is built for one trusted user or household, not untrusted multi-user hosting.
 
 ## Requirements
 
-- Node.js `22.5` or newer
+- Node.js 22.5 or newer
 - npm
-- Network access from the machine running the scraper
+- Network access to Carousell Singapore
+- Enough disk space for Playwright Chromium and local data
 
-The project depends on full `playwright`, not `playwright-core`. `npm install` runs:
+The project uses the full `playwright` package. During installation, the `postinstall` script runs:
 
 ```bash
 playwright install chromium
 ```
 
-So a bundled Playwright Chromium is normally used. You do not need to set `CHROME_PATH` for the normal setup.
+A separate Chrome installation and `CHROME_PATH` are not required for the normal setup.
 
-## Setup
-
-Clone the repo:
+## Quick start
 
 ```bash
 git clone https://github.com/Pikalev15/carousell-bot.git
 cd carousell-bot
-```
-
-Install dependencies:
-
-```bash
 npm install
-```
-
-Create a local config if you want to edit settings manually:
-
-```bash
 cp data/config.example.json data/config.json
-```
-
-Start the local server:
-
-```bash
 npm start
 ```
 
-Then open:
+Open:
 
 ```text
 http://localhost:3000
 ```
 
-On Windows, you can also double-click:
+On Windows, `start-local.bat` can also launch the project.
 
-```text
-start-local.bat
+## Runtime commands
+
+```bash
+npm start              # Full runtime: src/server-plus.js
+npm run dev            # Same runtime without a separate build step
+npm run start:plus     # Explicit full-runtime alias
+npm run start:core     # Core server only, mainly for debugging
+npm run migrate        # Migrate supported JSON data into SQLite
+npm run clean:images   # Clean cached listing images
+npm run enrich:data    # Enrich stored listing data
+npm run medians:default
+npm run export:data
+npm run debug:duplicates
+npm test
 ```
 
 ## Dashboard authentication
 
-For LAN/NAS use, set a simple shared dashboard token:
+Set a long random dashboard token before making the service reachable from other devices:
 
 ```bash
 DASHBOARD_TOKEN=replace-with-a-long-random-string npm start
 ```
 
-Every `/api/*` route except `/api/health` requires this token when it is set, including the default plus runtime and the core-only debug runtime. The browser dashboard prompts for the token once and stores it in `sessionStorage` for that tab/session.
+When configured, every `/api/*` route except `/api/health` requires the token. The dashboard stores the supplied token in `sessionStorage` for the current browser tab/session.
 
-If `DASHBOARD_TOKEN` is not set, the server still starts for localhost-only development but logs a clear warning that API routes are unauthenticated.
+Authentication can be supplied through:
 
-## Browser path notes
+- `x-dashboard-token`
+- `Authorization: Bearer <token>`
+- The dashboard session cookie used by the local UI
 
-The normal setup uses bundled Playwright Chromium. No browser path is required.
+Do not expose an unauthenticated instance on a NAS, reverse proxy, port forward, or public tunnel.
 
-A custom system browser path is only useful if you intentionally modify the scraper launch code to use your installed Chrome/Chromium instead of Playwright's bundled browser. In the current code path, `CHROME_PATH` is not required for normal use.
+## Core workflow
 
-For Chromebook Linux, install/run the project inside the Linux environment. The ChromeOS browser outside the container is not enough for Node/Playwright to launch browser automation.
+1. Enter a search query or one or more supported Carousell start URLs.
+2. The scraper opens Carousell with Playwright.
+3. Visible listing cards and supported structured page data are parsed.
+4. New and changed listings are stored.
+5. Optional detail hydration retrieves descriptions, sellers, locations, images, and better price information.
+6. Listings are classified and scored.
+7. Duplicate metadata, market medians, feedback, watch rules, snoozes, and seller rules are applied.
+8. The dashboard displays results and alerts qualifying deals.
+9. Manual labels improve future preference scoring.
 
-## How to use it
+## Search and scraping
 
-1. Open the dashboard at `localhost:3000`.
-2. Search for something like `RTX 3070`, `MacBook`, `AirPods`, or `camera`.
-3. The server opens Carousell through Playwright, reads visible listing cards, and stores the results.
-4. Listings are classified and scored.
-5. Use the filters, seller blacklist, and feedback buttons to make the results less noisy over time.
+The scraper combines several extraction paths:
 
-Useful buttons/features:
+- Visible DOM anchors linking to listing pages
+- Card text and images collected from surrounding DOM nodes
+- Supported `__NEXT_DATA__` structures when present
+- HTML-anchor parsing as a fallback
+- Optional per-listing detail-page hydration
 
-- **Search web** — runs a normal Carousell search
-- **Search more** — asks for a larger scrape
-- **Block seller** — hides future listings from that seller
-- **Good / skip / spam / bad pricer / bad deal** — labels a listing for the training model
-- **Train model better** — refined labels such as accessory-only, duplicate, wrong category, WTB/service, overpriced
-- **Retrain from labels** — rebuilds the preference model from your feedback
+Search modes include:
 
-## Watchlist and scheduler
+- Normal query search
+- Larger “search more” runs
+- Carousell start-URL parsing
+- Multi-URL searches
+- Scheduled watched searches
 
-The watchlist is for searches you want to keep checking, like:
+The scraper uses Singapore locale and timezone settings where supported.
 
-- `RTX 3070`
-- `B550 motherboard`
-- `SFX PSU`
-- `MacBook Air M1`
+## Listing hydration
 
-The scheduler can run active watched searches every few minutes or hours, with a bit of jitter so it does not hit the site in an overly robotic pattern.
+Initial search cards may not include complete information. Hydration can add or improve:
 
-Scheduler and scrape-health settings are stored locally in `data/config.json`. `scrapeHealthCheck.minResultRatio` controls when the bot warns that a watched search suddenly returned far fewer results than before.
+- Full description
+- Seller name and identifier
+- Seller profile URL
+- Location
+- Real price when the card uses a placeholder
+- Product image URLs
+- Listing timestamp information where available
+- Variation and structured listing details
 
-## Telegram alerts
+Hydration is deliberately concurrency-limited to reduce load and avoid opening too many pages at once.
 
-Telegram alerts are optional.
+## Classification
 
-From the Settings page, you can add:
+Listings are classified before deal ranking. Current post types include:
 
-- Telegram bot token
-- Telegram chat ID
-- Enabled / paused state
+- `WTS` — normal item for sale
+- `WTB` — wanted, buyback, or service post
+- `WTF` — looking-for or recommendation-style post
+- `SPAM` — suspicious contact/payment or keyword pattern
+- `BAD_PRICER` — placeholder, bait, or unusable pricing
+- `BAD_DEAL` — user-labelled poor deal
+- `LEARNED_SKIP` — skipped by learned preference rules
+- `SELLER_BLOCKED` — seller is blacklisted
+- `UNKNOWN` — insufficient usable data
 
-Use **Send test message** to check that the bot can reach your chat.
+Classification considers:
 
-Do not commit real Telegram secrets. If a real Telegram bot token was ever committed, revoke it through @BotFather and issue a new token.
+- Configured phrase rules
+- Seller blacklist entries
+- WTB, buyback, repair, and service language
+- Looking-for language
+- Off-platform contact and payment patterns
+- Placeholder prices
+- Suspicious listing shapes
+- Accessory-only and incomplete-product patterns
+- User feedback and learned skip signals
+
+## Deal scoring
+
+The ranking engine produces a deal score from multiple components rather than relying only on price.
+
+Current components include:
+
+- Price relative to an available market or category median
+- Condition
+- Seller signal
+- Listing age
+- Learned preference score
+- Listing-detail completeness
+- Image count and basic image quality heuristics
+- Market sample confidence
+- Risk penalties
+
+Returned score data includes:
+
+- Overall deal score
+- Deal/non-deal decision
+- Price score
+- Seller score
+- Age score
+- Preference score
+- Detail score
+- Image score
+- Confidence score
+- Combined penalty
+- Estimated negotiation price
+- Percentage difference from median
+- Trend direction
+- Risk flags
+
+A high score should still be reviewed when confidence is low, the displayed price is unusually cheap, or the listing appears to be a bundle, accessory, deposit, variation, or damaged item.
+
+## Market medians
+
+The bot can use:
+
+1. A listing-specific market median
+2. A category median
+3. A generic electronics fallback median
+
+Rolling category-median tuning can update market references from collected data. Default-median scripts are also included.
+
+Broad category medians are only approximations. Exact product-model, capacity, condition, and variant matching is a major area for future improvement.
+
+## Duplicate handling
+
+The project supports automatic duplicate grouping plus manual corrections.
+
+Features include:
+
+- Duplicate metadata attached to listings
+- Duplicate-group inspection tools
+- Manual merge overrides
+- Manual split overrides
+- Duplicate-aware merged price history
+- Duplicate-aware exports
+- Feedback labels for duplicate listings
+
+Manual overrides are useful when reposts, edited titles, reused images, bundles, or similar products confuse automatic grouping.
+
+## Price history
+
+When SQLite is active, a new price-history point is recorded when a listing’s observed price changes.
+
+The dashboard and API can retrieve:
+
+- Direct listing price history
+- Duplicate-aware merged history
+- CSV price-history exports
+
+Unchanged prices are not repeatedly inserted.
+
+## Seller tools
+
+Seller-related features include:
+
+- Seller blacklist
+- Seller-name and seller-ID storage
+- Seller profile URL storage
+- Seller rating when available
+- Seller reputation history
+- Seller-aware duplicate and listing analysis
+- Seller blocking from the dashboard
+
+Seller data can be incomplete when Carousell does not expose it on the search card or detail hydration fails.
+
+## Feedback and training
+
+The dashboard supports basic and refined feedback labels.
+
+Basic examples:
+
+- Good
+- Skip
+- Spam
+- Bad pricer
+- Bad deal
+
+Refined examples:
+
+- Good deal
+- Accessory only
+- Duplicate listing
+- Wrong category
+- WTB/service
+- Overpriced or otherwise unsuitable
+
+Feedback is stored locally and can be used to rebuild the preference model. Telegram training callbacks can apply the same refined labels from alert messages.
+
+The current training system is rule and score based. It is not a large external AI model.
+
+## Watched searches
+
+Watched searches can store:
+
+- Query
+- Optional price ceiling
+- Category
+- Search kind
+- Terms
+- Start URLs
+- Enabled/disabled state
+- Last-run time
+- Previous result count
+- Scrape-health alert time
+- Temporary mute state
+
+Muted watches remain configured but are skipped until the mute expires.
+
+## Scheduler
+
+The scheduler runs active, unmuted watches at a configured interval.
+
+Features include:
+
+- Minimum and maximum interval limits
+- Random jitter
+- Manual run-now support
+- Run status and next-run time
+- Activity records
+- Per-watch failure isolation
+- Continued processing when one watch fails
+- Scrape-health checks
+- Protection against overwriting settings changed during a long run
+
+Scheduler configuration is stored in the local config collection.
+
+## Scrape-health monitoring
+
+Health monitoring compares a watch’s current result count with its previous healthy count.
+
+When a result count falls below the configured ratio, the bot can generate a warning suggesting that:
+
+- Carousell returned unexpectedly few results
+- The page structure may have changed
+- The session may have encountered a blocked or incomplete page
+
+Health alerts are rate-limited per watch. Explicit blocked-page and layout-change detection remain areas for further improvement.
+
+## Listing snoozing and watch muting
+
+Listings can be snoozed so they temporarily disappear from normal attention and alert flows.
+
+Watched searches can also be muted for a duration. Telegram commands support these actions:
+
+```text
+/snooze <listing_id> [duration]
+/mute <query_or_watch_id> <duration>
+```
+
+## Telegram
+
+Telegram integration is optional.
+
+Configure:
+
+- Bot token
+- Chat ID
+- Enabled state
+
+Supported capabilities include:
+
+- Deal alerts
+- Scrape-health alerts
+- Test messages
+- Command polling
+- Snooze command
+- Watch mute command
+- Interactive training menu
+- Refined feedback callbacks
+
+Never commit a real Telegram bot token. Revoke any token that has been exposed.
 
 ## Daily email digest
 
-The app can send a once-per-day HTML "Top Deals" digest through Gmail SMTP. It uses enabled watched searches, picks listings scraped in the last 24 hours, scores them with simple deal and fake/scam risk rules, and skips sending when there are no qualifying deals.
+The app can send a once-daily HTML Top Deals digest through Gmail SMTP.
 
-On your PC, open the dashboard Settings view and fill in **Email Digest**:
+Dashboard configuration includes:
 
 - Gmail address
-- Gmail app password
-- Recipient email
+- Gmail App Password
+- Recipient address
 - Daily send time
-- Enabled / paused state
+- Enabled state
 
-Click **Save Digest**, then **Send test email** to verify SMTP before waiting for the daily schedule.
-
-You can also set these environment variables before starting the server:
+Environment-variable fallback:
 
 ```bash
 GMAIL_USER=your-address@gmail.com
-GMAIL_APP_PASSWORD=your-google-app-password
+GMAIL_APP_PASSWORD=your-app-password
 DIGEST_EMAIL_TO=recipient@example.com
 DIGEST_SEND_TIME=08:00
 npm start
 ```
 
-`GMAIL_APP_PASSWORD` must be a Google App Password, not your normal Gmail password. `DIGEST_SEND_TIME` is local server time in `HH:mm` format and defaults to `08:00` if omitted or invalid. Dashboard settings are stored locally in `data/config.json`; environment variables are used as a fallback when local digest fields are blank.
+Use a Gmail App Password, not the normal account password.
 
-The MVP digest is intentionally rule-based. Each listing gets a `dealScore`, `riskScore`, and `finalScore`, with explanation reasons for price vs median, saved-search keyword match, freshness, seller trust, duplicate/repost signals, listing completeness, risky contact/payment keywords, placeholder prices, and missing detail. Medium/high risk listings are marked with a warning badge. It does not use AI summaries, ML, or Gmail API access.
+The digest uses locally calculated deal, risk, and final ranking scores. It does not require Gmail API access or an external AI service.
 
-## Local data
+## Alerts and activity
 
-Local mutable state lives under `data/`, including config, labels, search history, alerts, watchlist data, exports, cached images, and SQLite databases. These files are ignored by default so secrets and personal marketplace history do not get committed.
+Local alert records can include:
 
-Committed seed/template files:
+- Deal alerts
+- Scrape-health warnings
+- Delivery status
+- Read/unread state
+- Listing and watch references
+- Error details
 
-- `data/config.example.json` — safe config template with empty Telegram and email digest values
-- `data/listings.json` — intentional mock/demo listing seed data, not real scraped data
-- `data/filters.json` — default phrase-filter seed data
-- `data/seller-blacklist.json` — default mock seller-block seed data
+The activity log records scheduler runs, scrape failures, health-check failures, and other operational events.
 
-SQLite notes:
+## Imports and exports
 
-- When `node:sqlite` is available, `src/store.js` opens `data/carousell-bot.db`, migrates JSON once, and prefers SQLite.
-- If `node:sqlite` is unavailable, JSON files remain the fallback path.
-- Price history is SQLite-only at the moment; the JSON fallback returns an empty history.
+The full runtime exposes export and import features for analysis, backup, or migration.
 
-Migration command:
+Common routes:
 
-```bash
-npm run migrate
+```text
+GET  /api/export
+POST /api/import
+GET  /api/export/listings.csv
+GET  /api/export/deals.csv
+GET  /api/export/alerts.json
+GET  /api/export/price-history.csv
+GET  /api/start-urls/parse?url=<encoded-url>
 ```
 
-## Runtime scripts
+Additional API routes cover listings, deals, price history, duplicate overrides, seller reputation, snoozing, feedback, searches, alerts, and search-job status.
+
+Treat exports as personal data: they can contain search history, seller information, pricing history, configuration, and marketplace behavior.
+
+## Storage
+
+Mutable state lives under `data/`.
+
+SQLite behavior:
+
+- `src/store.js` attempts to load Node’s built-in `node:sqlite`.
+- The default database is `data/carousell-bot.db`.
+- `CAROUSELL_DB_PATH` can override the database location.
+- WAL mode is enabled.
+- Foreign keys are enabled.
+- Supported JSON data is migrated when needed.
+- Price history is currently SQLite-only.
+
+JSON files remain useful as:
+
+- Safe examples and seed data
+- Bootstrap data
+- Fallback storage when `node:sqlite` is unavailable
+- Local files for selected collections
+
+Committed templates and seed data include:
+
+- `data/config.example.json`
+- `data/listings.json`
+- `data/filters.json`
+- `data/seller-blacklist.json`
+
+Do not commit runtime databases, alert data, watchlists, exports, cached images, or files containing secrets.
+
+## Performance and caching
+
+The full server includes:
+
+- Scoped listing-result caching
+- Configurable cache size through `LISTINGS_CACHE_MAX`
+- Optional timing logs through `PERF_LOG`
+- Asynchronous hydration jobs
+- Limited hydration concurrency
+- Batched listing operations
+- SQLite transactions for supported bulk writes
+
+Example:
 
 ```bash
-npm start          # default full runtime: src/server-plus.js
-npm run dev        # same as npm start
-npm run start:plus # explicit alias for the default full runtime
-npm run start:core # core server only, mostly for debugging; honors DASHBOARD_TOKEN
-npm run clean:images
-npm run enrich:data
-npm run medians:default
-npm run export:data
-npm test
+PERF_LOG=1 LISTINGS_CACHE_MAX=80 npm start
 ```
 
-## NAS Docker deployment
+## Docker and NAS deployment
 
-The repo includes a NAS-friendly Docker setup:
+The repository includes:
 
 - `Dockerfile`
 - `docker-compose.yml`
 - `scripts/deploy-nas.ps1`
+- `docs/NAS-DOCKER-DEPLOY.md`
 
-From Windows, deploy over SSH with:
+Example Windows deployment helper:
 
 ```powershell
-.\scripts\deploy-nas.ps1 -HostName 192.168.1.50 -User your-nas-user -RemoteDir /volume1/docker/carousell-bot -Port 3000
+.\scripts\deploy-nas.ps1 `
+  -HostName 192.168.1.50 `
+  -User your-nas-user `
+  -RemoteDir /volume1/docker/carousell-bot `
+  -Port 3000
 ```
 
-See `docs/NAS-DOCKER-DEPLOY.md` for the full install/update flow.
+For NAS use:
 
-## Export routes
+- Persist the `data/` directory or database path.
+- Set `DASHBOARD_TOKEN`.
+- Avoid public port forwarding.
+- Back up the SQLite database and configuration.
+- Monitor disk usage from cached images, logs, alerts, and history.
+- Keep Playwright and Chromium versions aligned with the application image.
 
-Available from the default runtime:
+## Configuration and environment variables
 
-```text
-/api/export/listings.csv
-/api/export/deals.csv
-/api/export/alerts.json
-/api/export/price-history.csv
-/api/start-urls/parse?url=<encoded carousell url>
-```
+Common environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | HTTP port, default `3000` |
+| `DASHBOARD_TOKEN` | Protects dashboard API routes |
+| `CAROUSELL_DB_PATH` | Overrides the SQLite database path |
+| `LISTINGS_CACHE_MAX` | Maximum scoped listing-cache entries |
+| `PERF_LOG` | Enables performance timing logs |
+| `GMAIL_USER` | Gmail SMTP sender fallback |
+| `GMAIL_APP_PASSWORD` | Gmail App Password fallback |
+| `DIGEST_EMAIL_TO` | Daily-digest recipient fallback |
+| `DIGEST_SEND_TIME` | Daily-digest local send time |
+
+Additional notification and runtime settings can be stored in the local config through the dashboard.
 
 ## Tests
 
-Run the test suite with:
+Run:
 
 ```bash
 npm test
 ```
 
-The tests use Node's built-in test runner.
+The project uses Node’s built-in test runner.
+
+Important regression areas include:
+
+- Runtime defaults
+- Parsing and normalization
+- Classification and scoring
+- Duplicate grouping
+- Storage and migration
+- Scheduler behavior
+- Authentication
+- Search URL parsing
+- Export formatting
+
+Real-page fixture coverage should continue to expand because scraper behavior is the most change-sensitive part of the application.
 
 ## Project structure
 
 ```text
 carousell-bot/
-├── data/                  # Local data templates and ignored runtime state
-├── docs/                  # Notes and spec addendums
-├── public/                # Dashboard HTML, CSS, and browser JS
-├── src/                   # Server, scraper, scoring, storage, notifications
-├── test/                  # Node test files
-├── start-local.bat        # Windows local launcher
+├── data/                       # Templates, seeds, and ignored runtime state
+├── docs/                       # Deployment notes and design documents
+├── public/                     # Dashboard HTML, CSS, and browser JavaScript
+├── scripts/                    # Migration, cleanup, enrichment, export, deployment
+├── src/
+│   ├── server.js               # Core HTTP server and original runtime
+│   ├── server-plus.js          # Default extended runtime and API routes
+│   ├── scraper.js              # Playwright search and detail extraction
+│   ├── store.js                # SQLite-first persistence and JSON fallback
+│   ├── scheduler.js            # Watched-search scheduling and health checks
+│   ├── filterEngine.js         # Classification, scoring, confidence, risk
+│   ├── notifier.js             # Telegram and notification delivery
+│   ├── plusHydration.js        # Extended listing hydration
+│   ├── duplicateGroups.js      # Duplicate grouping
+│   ├── batchFeatures.js        # Batch, import/export, duplicate overrides
+│   ├── listingDataQuality.js   # Parsing, enrichment, CSV helpers
+│   ├── refinedFeedback.js      # Refined training labels
+│   ├── categoryMedianAutoTune.js
+│   └── dashboardAuth.js
+├── test/                       # Node test files
+├── Dockerfile
+├── docker-compose.yml
+├── start-local.bat
 ├── package.json
 └── README.md
 ```
 
-## Roadmap
+## Reliability roadmap
 
-Things that would make the project stronger next:
+Highest-priority improvements:
 
-- Make SQLite the explicit documented default everywhere
-- Add better duplicate detection across repeated scrapes
-- Improve seller reputation tracking
-- Add more reliable price history charts
-- Make the scheduler easier to configure from the UI
-- Add export/import for filters and watchlists
-- Improve the training model so it learns more than simple user labels
-- Make deployment to a NAS cleaner
+- Structured scrape outcomes: success, partial, blocked, layout-changed, failed
+- Challenge, consent-page, and empty-page detection
+- Persistent scrape-job queue with retries and cancellation
+- Shared browser manager instead of repeated browser launches
+- Request body limits, rate limits, and stronger LAN defaults
+- Database backup, integrity checking, retention, and restore tooling
+- Better listing lifecycle states: new, updated, sold, deleted, relisted
 
-## Notes
+## Data-quality roadmap
 
-This project is for personal marketplace research and local deal tracking. Be reasonable with search frequency and respect the sites you interact with. If Carousell changes its frontend, the scraper may need updates.
+- Exact product identity extraction
+- Model, generation, capacity, and variant matching
+- Better bundle and per-unit price handling
+- Comparable-sales engine rather than broad category medians
+- Separate deal, confidence, product-match, and scam-risk scores
+- More seller reputation fields
+- Improved multilingual and negation-aware classification
+- Image hashing and cross-listing image reuse detection
+- Stronger repost and underlying-item identity
+
+## Dashboard roadmap
+
+- Operational health view
+- Persistent job progress
+- Database and cache size indicators
+- Last backup and integrity-check status
+- Comparable-listing explanations
+- Manual corrections for extracted price, model, condition, and category
+- Side-by-side comparison
+- Better historical charts
+- More advanced watched-search rule builder
+
+## Security notes
+
+- Keep the service local or behind a trusted LAN/VPN/reverse proxy.
+- Set `DASHBOARD_TOKEN` before LAN deployment.
+- Never commit Telegram tokens, Gmail App Passwords, cookies, or exports.
+- Do not expose the SQLite database through a public file share.
+- Treat imported bundles as untrusted until validated.
+- Keep dependencies and the Playwright browser updated together.
+
+## Responsible use
+
+Use reasonable search intervals and concurrency. This project is for personal marketplace research and deal tracking. Carousell may enforce limits or change its service, frontend, and automation protections.
+
+## License
+
+No explicit open-source license is currently documented. Until a license is added, normal copyright rules apply even though the repository is public.
