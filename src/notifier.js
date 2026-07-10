@@ -73,7 +73,11 @@ export async function startTelegramCommandPolling(handleCommand) {
           }
           const parsed = parseTelegramCallbackData(callback.data);
           const reply = await handleCommand({ ...parsed, type: "callback", id: callback.id, chatId, message: callback.message, data: callback.data }, { chatId, config }).catch((error) => `Action failed: ${error.message}`);
-          await answerCallbackQuery(callback.id, reply || "Done", config).catch(() => {});
+          const callbackText = typeof reply === "object" ? reply.answer || reply.text || "Done" : reply;
+          await answerCallbackQuery(callback.id, callbackText || "Done", config).catch(() => {});
+          if (reply && typeof reply === "object" && reply.message) {
+            await sendTelegramMessage(reply.message, config, { chatId, replyMarkup: reply.replyMarkup }).catch(() => {});
+          }
           continue;
         }
         const message = update.message || update.edited_message;
@@ -143,6 +147,7 @@ export function alertInlineKeyboard(alert = {}) {
     { text: "Spam", callback_data: `cb:spam:${id}` }
   ]);
   rows.push([
+    { text: "Train more", callback_data: `cb:train:${id}` },
     { text: "Block seller", callback_data: `cb:block:${id}` },
     { text: "Watch similar", callback_data: `cb:watch:${id}` }
   ]);
