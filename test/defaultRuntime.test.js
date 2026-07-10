@@ -8,6 +8,9 @@ const serverPlusSource = await readFile(new URL("../src/server-plus.js", import.
 const serverUnifiedSource = await readFile(new URL("../src/server-unified.js", import.meta.url), "utf8");
 const plusRuntimeSource = await readFile(new URL("../src/plusRuntime.js", import.meta.url), "utf8");
 const carousellSearchSource = await readFile(new URL("../src/carousellSearch.js", import.meta.url), "utf8");
+const storeSource = await readFile(new URL("../src/store.js", import.meta.url), "utf8");
+const storeReliabilitySource = await readFile(new URL("../src/storeReliability.js", import.meta.url), "utf8");
+const notifierSource = await readFile(new URL("../src/notifier.js", import.meta.url), "utf8");
 const refinedFeedbackSource = await readFile(new URL("../public/refined-feedback.js", import.meta.url), "utf8");
 const notificationCss = await readFile(new URL("../public/notification-detail.css", import.meta.url), "utf8");
 
@@ -83,6 +86,34 @@ test("store reliability helper has valid syntax", () => {
     encoding: "utf8"
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("runtime id helper has valid syntax", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/runtimeIds.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(storeReliabilitySource, /export \{ nextRuntimeId \}/);
+});
+
+test("store core mark-read path updates all alerts directly", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/store.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(storeSource, /function markAlertsRead\(\)/);
+  assert.match(storeSource, /readJsonFile\("alerts", \[\]\)/);
+  assert.match(storeSource, /SELECT id, payload FROM alerts WHERE read_at IS NULL/);
+  assert.doesNotMatch(storeSource, /getAlerts\(\{ limit: 500 \}\)\.map/);
+});
+
+test("notifier uses runtime ids for persisted alerts", () => {
+  const result = spawnSync(process.execPath, ["--check", "src/notifier.js"], {
+    encoding: "utf8"
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(notifierSource, /nextRuntimeId/);
+  assert.match(notifierSource, /id:\s*alert\.id \|\| nextRuntimeId\(\)/);
 });
 
 test("carousell search emits scrape diagnostics", () => {
