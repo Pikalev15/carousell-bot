@@ -35,7 +35,11 @@ function renderSection(section) {
 function renderDeal(deal) {
   const listing = deal.listing;
   const url = listing.carousell_url || listing.url || "";
-  const reasons = deal.reasons.slice(0, 4).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
+  const reasons = [
+    ...(deal.dealReasons || []),
+    ...(deal.riskReasons || []).map((reason) => `Risk: ${reason}`)
+  ].slice(0, 5).map((reason) => `<li>${escapeHtml(reason)}</li>`).join("");
+  const riskBadge = renderRiskBadge(deal.riskLevel, deal.riskScore);
   return `
     <article style="background:#fff;border:1px solid #dfe5ef;border-radius:8px;margin:0 0 12px;padding:16px;">
       <div style="display:flex;gap:12px;align-items:flex-start;justify-content:space-between;">
@@ -45,7 +49,10 @@ function renderDeal(deal) {
         </div>
         <strong style="white-space:nowrap;font-size:18px;">${formatMoney(listing.current_price)}</strong>
       </div>
-      <p style="margin:10px 0 0;color:#172033;">Score <strong>${deal.score}</strong> · Price ${deal.components.price} · Match ${deal.components.keyword} · Freshness ${deal.components.freshness}</p>
+      <p style="margin:10px 0 0;color:#172033;">
+        Final <strong>${deal.finalScore ?? deal.score}</strong> · Deal ${deal.dealScore ?? deal.components?.price ?? 0} · Risk ${deal.riskScore ?? 0}
+        ${riskBadge}
+      </p>
       ${reasons ? `<ul style="margin:10px 0 0;padding-left:20px;color:#465066;">${reasons}</ul>` : ""}
     </article>
   `;
@@ -57,12 +64,19 @@ function renderTextDigest({ sections = [], generatedAt = new Date() } = {}) {
     lines.push(section.search.query || "Saved search");
     for (const deal of section.deals) {
       const listing = deal.listing;
-      lines.push(`- ${listing.title} | ${formatMoney(listing.current_price)} | score ${deal.score}`);
+      lines.push(`- ${listing.title} | ${formatMoney(listing.current_price)} | final ${deal.finalScore ?? deal.score} | deal ${deal.dealScore ?? 0} | risk ${deal.riskScore ?? 0}`);
       if (listing.carousell_url) lines.push(`  ${listing.carousell_url}`);
     }
     lines.push("");
   }
   return lines.join("\n").trim();
+}
+
+function renderRiskBadge(level, score) {
+  if (!level || level === "low") return "";
+  const background = level === "high" ? "#ffe1e1" : "#fff1c7";
+  const color = level === "high" ? "#9f1d1d" : "#8a5a00";
+  return `<span style="display:inline-block;margin-left:8px;padding:2px 7px;border-radius:999px;background:${background};color:${color};font-size:12px;font-weight:700;">${escapeHtml(level.toUpperCase())} RISK ${Number(score || 0)}</span>`;
 }
 
 function linkOrText(url, text) {
