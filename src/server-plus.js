@@ -274,7 +274,7 @@ async function handleTelegramTrainingCallback(callback) {
     return {
       answer: "Choose a training label",
       message: `Train listing #${listingId}: ${listing.title}\nPick the reason so future alerts get smarter.`,
-      replyMarkup: telegramTrainingMenu(listingId)
+      reply_markup: telegramTrainingMenu(listingId)
     };
   }
 
