@@ -262,17 +262,34 @@ export function createAlert(input) {
 
 export function markAlertsRead() {
   const readAt = new Date().toISOString();
-  const alerts = getAlerts({ limit: 500 }).map((alert) => ({ ...alert, read_at: alert.read_at || readAt }));
   if (!db) {
-    writeJsonFile("alerts", alerts);
-    if (alerts.length > 0) bumpStoreVersion("alerts");
-    return { marked: alerts.length, read_at: readAt };
+    const alerts = readJsonFile("alerts", []);
+    let marked = 0;
+    const nextAlerts = alerts.map((alert) => {
+      if (!alert || typeof alert !== "object" || alert.read_at) return alert;
+      marked += 1;
+      return { ...alert, read_at: readAt };
+    });
+    if (marked > 0) {
+      writeJsonFile("alerts", nextAlerts);
+      bumpStoreVersion("alerts");
+    }
+    return { marked, read_at: readAt };
   }
+
+  const rows = db.prepare("SELECT id, payload FROM alerts WHERE read_at IS NULL").all();
+  if (!rows.length) return { marked: 0, read_at: readAt };
+
   runTransaction((items) => {
-    for (const alert of items) db.prepare("UPDATE alerts SET read_at = ?, payload = ? WHERE id = ?").run(alert.read_at, JSON.stringify(alert), alert.id);
-  }, alerts);
-  if (alerts.length > 0) bumpStoreVersion("alerts");
-  return { marked: alerts.length, read_at: readAt };
+    const update = db.prepare("UPDATE alerts SET read_at = ?, payload = ? WHERE id = ?");
+    for (const row of items) {
+      const payload = parsePayload(row.payload) || {};
+      const nextPayload = { ...payload, read_at: readAt };
+      update.run(readAt, JSON.stringify(nextPayload), row.id);
+    }
+  }, rows);
+  bumpStoreVersion("alerts");
+  return { marked: rows.length, read_at: readAt };
 }
 
 export function addActivity(input) {
