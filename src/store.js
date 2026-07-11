@@ -127,14 +127,14 @@ export function bulkUpsertListings(listings) {
 export function getListingById(id) {
   if (!db) return readCollection("listings").find((listing) => Number(listing.id) === Number(id)) || null;
   const row = db.prepare("SELECT payload FROM listings WHERE id = ?").get(Number(id));
-  return row ? parsePayload(row.payload) : null;
+  return row ? normalizeStoredListingPrice(parsePayload(row.payload)) : null;
 }
 
 export function getListingByCarousellId(carousellId) {
   if (!carousellId) return null;
   if (!db) return readCollection("listings").find((listing) => listing.carousell_id === carousellId) || null;
   const row = db.prepare("SELECT payload FROM listings WHERE carousell_id = ?").get(carousellId);
-  return row ? parsePayload(row.payload) : null;
+  return row ? normalizeStoredListingPrice(parsePayload(row.payload)) : null;
 }
 
 export function addPriceHistory(listingId, price, recordedAt = new Date().toISOString()) {
@@ -442,9 +442,10 @@ function readCollection(name) {
   if (!db) {
     if (name === "config") return withConfigDefaults(readJsonFile("config", {}));
     if (name === "trainingModel") return readJsonFile("trainingModel", {});
-    return readJsonFile(name, []);
+    const value = readJsonFile(name, []);
+    return name === "listings" ? value.map(normalizeStoredListingPrice) : value;
   }
-  if (name === "listings") return db.prepare("SELECT payload FROM listings ORDER BY id ASC").all().map((row) => parsePayload(row.payload));
+  if (name === "listings") return db.prepare("SELECT payload FROM listings ORDER BY id ASC").all().map((row) => normalizeStoredListingPrice(parsePayload(row.payload)));
   if (name === "filters") return db.prepare("SELECT payload FROM filters ORDER BY id ASC").all().map((row) => parsePayload(row.payload));
   if (name === "sellers") return db.prepare("SELECT payload FROM sellers ORDER BY blocked_at DESC, seller_id ASC").all().map((row) => parsePayload(row.payload));
   if (name === "labels") return db.prepare("SELECT payload FROM labels ORDER BY timestamp ASC").all().map((row) => parsePayload(row.payload));
@@ -452,6 +453,16 @@ function readCollection(name) {
   if (name === "config") return withConfigDefaults(parsePayload(db.prepare("SELECT value FROM config WHERE key = 'main'").get()?.value || "{}"));
   if (name === "trainingModel") return parsePayload(db.prepare("SELECT value FROM training_model WHERE key = 'main'").get()?.value || "{}");
   throw new Error(`Unknown store collection: ${name}`);
+}
+
+function normalizeStoredListingPrice(listing) {
+  if (!listing || listing.price_source !== "description") return listing;
+  const cardPrice = Number(listing.display_price || 0);
+  return {
+    ...listing,
+    current_price: cardPrice > 0 ? cardPrice : Number(listing.current_price || 0),
+    price_source: "card"
+  };
 }
 
 function writeCollection(name, value) {

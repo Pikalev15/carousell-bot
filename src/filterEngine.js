@@ -180,7 +180,6 @@ function getDetailScore(listing, productImageScore = imageQualityScore(listing))
   if (listing.seller_url) score += 8;
   if (productImageScore >= 70) score += 15;
   else if (productImageScore >= 45) score += 6;
-  if (listing.price_source === "description") score += 8;
   if (Array.isArray(listing.variations) && listing.variations.length > 0) score += 7;
   return Math.min(100, score);
 }

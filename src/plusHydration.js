@@ -1,5 +1,3 @@
-import { extractLikelySellingPriceFromText } from "./priceExtraction.js";
-
 const CAROUSELL_BASE_URL = "https://www.carousell.sg";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
@@ -93,7 +91,6 @@ async function hydrateOne(browser, listing) {
     const details = await readDetailPage(page);
     const seller = extractSellerFromDetails(details, listing.seller_name);
     const description = extractDescription(details.bodyText, details.metaDescription, listing.title);
-    const detailPrice = extractRealPriceFromDescription(`${description}\n${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`);
     const likeCount = extractLikeCount(details);
     return {
       ...listing,
@@ -102,8 +99,8 @@ async function hydrateOne(browser, listing) {
       seller_id: seller.id || listing.seller_id,
       seller_url: seller.url || listing.seller_url || "",
       location: extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks) || listing.location || "",
-      current_price: detailPrice || listing.current_price,
-      price_source: detailPrice && detailPrice !== listing.current_price ? "description" : listing.price_source || "card",
+      current_price: listing.display_price || listing.current_price,
+      price_source: "card",
       like_count: likeCount,
       likes_count: likeCount,
       favourite_count: likeCount,
@@ -336,10 +333,6 @@ function extractLocationFromFreeText(value = "") {
     if (location) return location;
   }
   return "";
-}
-
-function extractRealPriceFromDescription(description) {
-  return extractLikelySellingPriceFromText(description);
 }
 
 function mergeImageUrls(...sources) {

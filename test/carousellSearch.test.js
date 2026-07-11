@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractDescription, extractListingsFromHtml, extractLocation, extractRealPriceFromDescription, parseCardText } from "../src/carousellSearch.js";
+import { extractDescription, extractListingsFromHtml, extractLocation, parseCardText } from "../src/carousellSearch.js";
 import { parseMoney } from "../src/currency.js";
 import { estimateMsrp } from "../src/msrpSearch.js";
 
@@ -20,20 +20,9 @@ test("parses seller, age, title, condition from search card text", () => {
   assert.equal(parsed.condition, "Like new");
 });
 
-test("extracts actual price from description when card price is placeholder", () => {
-  assert.equal(extractRealPriceFromDescription("Placeholder price. Actual price is S$280 firm."), 280);
-  assert.equal(extractRealPriceFromDescription("Take all for $45, pickup today."), 45);
-});
-
 test("converts USD prices to SGD", () => {
   assert.equal(parseMoney("USD 100").sgd, 135);
   assert.equal(parseMoney("US$200").sgd, 270);
-  assert.equal(extractRealPriceFromDescription("Actual price is USD 100 firm."), 135);
-});
-
-test("does not treat delivery fees or deposits as item prices", () => {
-  assert.equal(extractRealPriceFromDescription("Self collect at Admiralty MRT. Can deliver for additional $5."), 0);
-  assert.equal(extractRealPriceFromDescription("$20 deposit for meetup deal. NO DEPOSIT=NO DEAL."), 0);
 });
 
 test("extracts the actual listing description section", () => {

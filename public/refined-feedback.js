@@ -105,12 +105,8 @@ function guardPlaceholderPriceDisplay() {
     const priceElement = card.querySelector(".price");
     if (!priceElement) return;
     const price = Number(listing.current_price || 0);
-    const descriptionPrice = listing.price_source === "description";
     const placeholder = PLACEHOLDER_PRICES.has(price);
-    if (descriptionPrice) {
-      priceElement.classList.add("description-price");
-      addPriceGuardNote(card, "Using price read from description, not the card placeholder.", "description");
-    } else if (placeholder) {
+    if (placeholder) {
       priceElement.textContent = "Check desc.";
       priceElement.classList.add("placeholder-price");
       addPriceGuardNote(card, "Card price looks like a placeholder. Refresh/hydrate details and read the description before judging this deal.", "placeholder");

@@ -1038,10 +1038,7 @@ function card(listing) {
     ? `<ul class="reasons">${classification.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>`
     : `<p class="meta">Clean WTS listing.</p>`;
   const labelBadge = label ? `<span class="badge info">${label.user_rating}</span>` : "";
-  const priceNote =
-    listing.price_source === "description"
-      ? `<p class="price-note">Price corrected from description. Card price was ${formatMoney(listing.display_price)}.</p>`
-      : "";
+  const priceNote = "";
   const reputation = sellerBadge(listing.seller_reputation);
   const sparkline = priceSparkline(listing.price_history);
   const market = marketBadge(listing.market_insight);

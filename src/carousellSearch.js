@@ -114,15 +114,14 @@ export async function refreshCarousellListingDetails(listing) {
     const seller = extractSellerFromDetails(details, listing.seller_name);
     const description = extractDescription(details.bodyText, details.metaDescription, listing.title);
     const location = extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks);
-    const detailPrice = extractRealPriceFromDescription(`${description}\n${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`);
     return {
       description,
       seller_name: seller.name || listing.seller_name,
       seller_id: seller.id || listing.seller_id,
       seller_url: seller.url || listing.seller_url || "",
       location: location || cleanLocation(listing.location) || "",
-      current_price: detailPrice || listing.current_price,
-      price_source: detailPrice && detailPrice !== listing.current_price ? "description" : listing.price_source || "card",
+      current_price: listing.display_price || listing.current_price,
+      price_source: "card",
       image_urls: mergeImageUrls(details.imageUrls, listing.image_urls),
       scraped_at: new Date().toISOString()
     };
@@ -299,8 +298,7 @@ function normalizeListing(input) {
   if (/^(buyer protection|instantbuy|chat|like|share)$/i.test(title)) return null;
 
   const cardPrice = parsePrice(input.price || cardText);
-  const detailPrice = isPlaceholderPrice(cardPrice) ? extractRealPriceFromDescription(input.description || "") : 0;
-  const price = detailPrice || cardPrice;
+  const price = cardPrice;
   const listedAgeMinutes = input.listedAgeMinutes ?? parsedCard.listedAgeMinutes ?? null;
   const location = cleanLocation(input.location || extractLocation(input.description || cardText, "", input.description || ""));
   const carousellId = input.id || url.match(/\/p\/[^/]+-(\d+)/)?.[1] || stableId(`${title}-${url}`);
@@ -321,7 +319,7 @@ function normalizeListing(input) {
     listed_at: listedAgeMinutes === null ? null : new Date(Date.now() - listedAgeMinutes * 60 * 1000).toISOString(),
     current_price: price > 99999 ? 0 : price,
     display_price: cardPrice,
-    price_source: detailPrice ? "description" : "card",
+    price_source: "card",
     image_urls: mergeImageUrls(input.imageUrls),
     carousell_url: url,
     scraped_at: new Date().toISOString()
@@ -373,7 +371,7 @@ async function hydrateListingDetail(browser, listing) {
       description,
       location: extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks),
       imageUrls: mergeImageUrls(details.imageUrls, listing.imageUrls),
-      price: extractRealPriceFromDescription(`${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`) || listing.price
+      price: listing.price
     };
   } catch {
     return { ...listing, ...parsed };
@@ -392,7 +390,6 @@ async function hydrateStoredListingDetail(browser, listing) {
     const details = await readDetailPage(page);
     const seller = extractSellerFromDetails(details, listing.seller_name);
     const description = extractDescription(details.bodyText, details.metaDescription, listing.title);
-    const detailPrice = extractRealPriceFromDescription(`${description}\n${details.bodyText}\n${details.metaDescription}\n${details.jsonLd}`);
     return {
       ...listing,
       description: description || listing.description || "",
@@ -400,8 +397,8 @@ async function hydrateStoredListingDetail(browser, listing) {
       seller_id: seller.id || listing.seller_id,
       seller_url: seller.url || listing.seller_url || "",
       location: extractLocation(details.bodyText, details.jsonLd, description, details.locationLinks) || listing.location || "",
-      current_price: detailPrice || listing.current_price,
-      price_source: detailPrice && detailPrice !== listing.current_price ? "description" : listing.price_source || "card",
+      current_price: listing.display_price || listing.current_price,
+      price_source: "card",
       image_urls: mergeImageUrls(details.imageUrls, listing.image_urls),
       details_scraped_at: new Date().toISOString(),
       scraped_at: new Date().toISOString()
@@ -646,24 +643,6 @@ async function newBrowserPage() {
   return { browser, page };
 }
 
-export function extractRealPriceFromDescription(description) {
-  const text = String(description || "");
-  const patterns = [
-    /(?:real|actual|selling|letting go|take|deal|price|asking|each|all for)\s*(?:price)?\s*(?:is|at|:|-)?\s*(?:S\$|SGD|US\$|USD|\$)\s?([\d,]+(?:\.\d+)?)/i,
-    /(?:S\$|SGD|US\$|USD|\$)\s?([\d,]+(?:\.\d+)?)\s*(?:firm|fixed|nett|each|for all|only)?/i
-  ];
-  for (const pattern of patterns) {
-    const match = text.match(pattern);
-    if (!match) continue;
-    const context = text.slice(Math.max(0, match.index - 40), match.index + match[0].length + 40);
-    if (/\b(?:deliver|delivery|shipping|courier|postage|additional|deposit|top up|top-up)\b/i.test(context)) continue;
-    const money = parseMoney(match[0], { defaultCurrency: /\b(?:usd|us\$)\b/i.test(context) ? "USD" : "SGD" });
-    const price = money.sgd || Math.round(Number(match[1].replaceAll(",", "")));
-    if (price > 1 && price < 100000) return price;
-  }
-  return 0;
-}
-
 function extractImageUrlsFromHtml(html) {
   const source = String(html || "");
   const urls = [];
@@ -700,10 +679,6 @@ function normalizeImageUrl(value) {
   if (url.startsWith("/")) return `${CAROUSELL_BASE_URL}${url}`;
   if (/^https?:\/\//i.test(url)) return url;
   return "";
-}
-
-function isPlaceholderPrice(price) {
-  return [0, 1, 8, 88, 888, 8888, 9999, 12345].includes(Number(price));
 }
 
 function normalizeCondition(value) {

@@ -160,7 +160,7 @@ test("likes UI script has valid syntax", () => {
 test("UI guards placeholder prices and enables alert scrolling", () => {
   assert.match(refinedFeedbackSource, /PLACEHOLDER_PRICES/);
   assert.match(refinedFeedbackSource, /Check desc\./);
-  assert.match(refinedFeedbackSource, /price_source === "description"/);
+  assert.doesNotMatch(refinedFeedbackSource, /price_source === "description"/);
   assert.match(notificationCss, /\.alerts-list[\s\S]*overflow-y:\s*auto/);
   assert.match(notificationCss, /\.alerts-panel[\s\S]*overflow:\s*hidden/);
 });
