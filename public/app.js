@@ -12,17 +12,24 @@ const state = {
   config: {},
   stats: {},
   trainingModel: {},
+  benchmark: {},
   health: {},
   diagnostics: {},
   priceTargets: [],
   searchResults: [],
   lastQuery: "",
+  searchIntent: "any",
   searchJob: null,
+  searchPollToken: 0,
+  hydrationRefreshStep: 0,
+  alertsMarkReadPending: false,
   theme: localStorage.getItem("theme") || "dark",
   density: localStorage.getItem("density") || "comfortable"
 };
 
 const API_TIMEOUT_MS = 15000;
+const JOB_STATUS_TIMEOUT_MS = 30000;
+const HYDRATION_REFRESH_STEP = 6;
 // Playwright-backed scraping endpoints launch a real browser, navigate, wait for
 // network idle, and hydrate several listing detail pages before responding — this
 // routinely takes well over 15s, so they get a much longer budget than everything else.
@@ -30,6 +37,7 @@ const SLOW_ENDPOINT_TIMEOUT_MS = 120000;
 const SLOW_ENDPOINT_PATTERNS = [/^\/api\/search$/, /^\/api\/listings\/[^/]+\/refresh-details$/, /^\/api\/scheduler\/run$/, /^\/api\/digest\/test$/];
 
 function timeoutForPath(path) {
+  if (/^\/api\/search\/jobs\/[^/]+$/.test(path)) return JOB_STATUS_TIMEOUT_MS;
   return SLOW_ENDPOINT_PATTERNS.some((pattern) => pattern.test(path)) ? SLOW_ENDPOINT_TIMEOUT_MS : API_TIMEOUT_MS;
 }
 
@@ -150,7 +158,15 @@ document.getElementById("alerts-toggle").addEventListener("click", () => toggleA
 document.getElementById("alerts-close").addEventListener("click", () => toggleAlerts(false));
 document.getElementById("alerts-scrim").addEventListener("click", () => toggleAlerts(false));
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") toggleAlerts(false);
+  if (event.key !== "Escape") return;
+  toggleAlerts(false);
+  document.querySelectorAll(".more-actions[open]").forEach((menu) => menu.removeAttribute("open"));
+});
+document.addEventListener("click", (event) => {
+  const activeMenu = event.target.closest(".more-actions");
+  document.querySelectorAll(".more-actions[open]").forEach((menu) => {
+    if (menu !== activeMenu || event.target.closest(".more-actions-menu button")) menu.removeAttribute("open");
+  });
 });
 document.addEventListener(
   "error",
@@ -170,13 +186,30 @@ document.addEventListener(
   },
   true
 );
-document.getElementById("alerts-mark-read").addEventListener("click", async () => {
+document.getElementById("alerts-mark-read").addEventListener("click", async (event) => {
+  if (state.alertsMarkReadPending) return;
+  const button = event.currentTarget;
+  const previousAlerts = state.alerts;
+  state.alertsMarkReadPending = true;
+  setButtonBusy(button);
+  state.alerts = {
+    ...state.alerts,
+    unread: 0,
+    alerts: (state.alerts.alerts || []).map((alert) => ({ ...alert, read_at: alert.read_at || new Date().toISOString() }))
+  };
+  renderAlerts();
   try {
     await api.post("/api/alerts/mark-read", {});
-    await load();
+    state.alerts = await api.get("/api/alerts");
+    renderAlerts();
     toggleAlerts(false);
   } catch (error) {
+    state.alerts = previousAlerts;
+    renderAlerts();
     showToast(`Could not mark alerts read: ${error.message}`, "error");
+  } finally {
+    state.alertsMarkReadPending = false;
+    resetButtonBusy(button);
   }
 });
 document.getElementById("watchlist-form").addEventListener("submit", async (event) => {
@@ -344,7 +377,9 @@ document.addEventListener("click", async (event) => {
       await api.post("/api/feedback/label", {
         listing_id: Number(button.dataset.listingId),
         rating: button.dataset.label,
-        asked_price: Number(button.dataset.price)
+        asked_price: Number(button.dataset.price),
+        search_query: state.lastQuery,
+        search_intent: state.searchIntent
       });
       await load();
       showToast(`Marked as ${button.dataset.label.replace("_", " ")}`);
@@ -490,7 +525,7 @@ document.addEventListener("click", async (event) => {
 async function load() {
   document.body.classList.add("is-loading");
   try {
-    const [listings, deals, filters, sellers, stats, labels, searches, trainingModel, alerts, watchlist, activity, scheduler, config, health, diagnostics, priceTargets] = await Promise.all([
+    const [listings, deals, filters, sellers, stats, labels, searches, trainingModel, benchmark, alerts, watchlist, activity, scheduler, config, health, diagnostics, priceTargets] = await Promise.all([
       api.get("/api/listings?include_filtered=true"),
       api.get("/api/deals"),
       api.get("/api/filters/blacklist"),
@@ -499,6 +534,7 @@ async function load() {
       api.get("/api/feedback/labels"),
       api.get("/api/search/history"),
       api.get("/api/training/model"),
+      api.get("/api/training/benchmark"),
       api.get("/api/alerts"),
       api.get("/api/watchlist"),
       api.get("/api/activity"),
@@ -508,7 +544,7 @@ async function load() {
       api.get("/api/search/diagnostics"),
       api.get("/api/price-targets")
     ]);
-    Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches, trainingModel, alerts, watchlist, activity, scheduler, config, health, diagnostics, priceTargets });
+    Object.assign(state, { listings, deals, filters, sellers, stats, labels, searches, trainingModel, benchmark, alerts, watchlist, activity, scheduler, config, health, diagnostics, priceTargets });
     if (state.lastQuery) {
       state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, state.lastQuery)), "search");
     }
@@ -548,6 +584,9 @@ async function runSearch(mode) {
   if (!query) return;
   const submit = mode === "more" ? document.getElementById("search-more") : document.querySelector("#search-form button[type='submit']");
   setButtonBusy(submit, mode === "more" ? "Searching more" : "Searching");
+  state.searchPollToken += 1;
+  const pollToken = state.searchPollToken;
+  state.hydrationRefreshStep = 0;
   document.getElementById("search-summary").textContent = mode === "more" ? "Searching Carousell for more results..." : "Searching Carousell...";
   try {
     const payload = await api.post("/api/search", {
@@ -556,15 +595,18 @@ async function runSearch(mode) {
       min_price: getNumberValue("search-min-price", 1),
       max_price: getNumberValue("search-max-price", null),
       location: document.getElementById("search-location").value.trim(),
+      intent: document.getElementById("search-intent").value,
       max_age_hours: getNumberValue("search-recent-filter", null),
       include_filtered: true
     });
     state.lastQuery = query;
+    state.searchIntent = payload.parsed_query?.intent || document.getElementById("search-intent").value || "any";
     state.searchResults = payload.results;
+    state.listings = mergeListingCollections(state.listings, payload.results);
     state.searches = payload.history;
-    await load();
     showView("search");
     document.getElementById("search-input").value = query;
+    document.getElementById("search-intent").value = state.searchIntent;
     renderSearch();
     const source = payload.source === "carousell-web" ? "Carousell web" : payload.source;
     const added = payload.added ? ` Added ${payload.added} new listings.` : "";
@@ -573,7 +615,7 @@ async function runSearch(mode) {
     document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}" via ${source}.${added}${updated}${warning}`;
     if (payload.hydration_job?.id) {
       state.searchJob = payload.hydration_job;
-      pollSearchJob(payload.hydration_job.id, query);
+      pollSearchJob(payload.hydration_job.id, query, pollToken);
     }
     showToast(payload.added || payload.updated ? `Added ${payload.added || 0}, updated ${payload.updated || 0}` : "Search complete");
   } catch (error) {
@@ -584,35 +626,61 @@ async function runSearch(mode) {
   }
 }
 
-async function pollSearchJob(id, query) {
+async function pollSearchJob(id, query, pollToken = state.searchPollToken, retryCount = 0) {
+  if (pollToken !== state.searchPollToken) return;
   try {
     const job = await api.get(`/api/search/jobs/${id}`);
+    if (pollToken !== state.searchPollToken) return;
     state.searchJob = job;
     const done = Number(job.completed || 0);
     const total = Number(job.total || 0);
+    const refreshStep = Math.floor(done / HYDRATION_REFRESH_STEP);
+    if (refreshStep > state.hydrationRefreshStep) {
+      state.hydrationRefreshStep = refreshStep;
+      await refreshHydratedSearchResults(query);
+    }
     if (job.status === "running" || job.status === "queued") {
       document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}". Enriching details ${done}/${total}...`;
-      setTimeout(() => pollSearchJob(id, query), 1800);
+      setTimeout(() => pollSearchJob(id, query, pollToken), 1800);
       return;
     }
     if (job.status === "complete") {
-      await load();
-      state.searchResults = applyPriceFilters(state.listings.filter((listing) => matchesQuery(listing, query)), "search");
-      renderSearch();
-      document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}". Details enriched ${done}/${total}.`;
-      showToast("Listing details enriched");
+      await refreshHydratedSearchResults(query);
+      const failed = Number(job.failed || 0);
+      document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}". Details enriched ${Number(job.enriched ?? done)}/${total}${failed ? `; ${failed} unavailable` : ""}.`;
+      showToast(failed ? `Details enriched with ${failed} unavailable listing${failed === 1 ? "" : "s"}` : "Listing details enriched", failed ? "warn" : "success");
       return;
     }
     document.getElementById("search-summary").textContent = `Found ${state.searchResults.length} visible results for "${query}". Detail enrichment failed: ${job.error || "unknown error"}`;
   } catch (error) {
-    showToast(`Hydration status failed: ${error.message}`, "error");
+    if (pollToken !== state.searchPollToken) return;
+    const nextRetry = retryCount + 1;
+    document.getElementById("search-summary").textContent = `Hydration is still running. Reconnecting to progress (${nextRetry})...`;
+    if (nextRetry === 3) {
+      showToast(`Hydration progress delayed: ${error.message}. Retrying automatically.`, "warn", { dedupeKey: `hydration-${id}` });
+    }
+    setTimeout(() => pollSearchJob(id, query, pollToken, nextRetry), Math.min(10000, 1800 + nextRetry * 1200));
   }
+}
+
+async function refreshHydratedSearchResults(query) {
+  const params = new URLSearchParams({ q: query, intent: state.searchIntent, include_filtered: "true" });
+  const results = await api.get(`/api/listings?${params}`);
+  state.searchResults = results;
+  state.listings = mergeListingCollections(state.listings, results);
+  renderSearch();
+}
+
+function mergeListingCollections(existing = [], incoming = []) {
+  const merged = new Map((existing || []).map((listing) => [Number(listing.id), listing]));
+  for (const listing of incoming || []) merged.set(Number(listing.id), listing);
+  return [...merged.values()];
 }
 
 function showView(view) {
   document.querySelectorAll(".nav-button").forEach((item) => item.classList.toggle("active", item.dataset.view === view));
   document.querySelectorAll(".view").forEach((item) => item.classList.toggle("active", item.id === view));
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  window.scrollTo({ top: 0, behavior: "auto" });
 }
 
 function renderStats() {
@@ -989,6 +1057,14 @@ function renderDigestEmail() {
     <div><span class="meta">Sends when</span><strong>Enabled searches have qualifying 24h deals</strong></div>
     ${missing}
   `;
+  const benchmark = state.benchmark || {};
+  const metric = (value) => value === null || value === undefined ? "n/a" : `${value}%`;
+  document.getElementById("training-benchmark").innerHTML = `
+    <div><span class="meta">Precision</span><strong>${metric(benchmark.precision)}</strong></div>
+    <div><span class="meta">Recall</span><strong>${metric(benchmark.recall)}</strong></div>
+    <div><span class="meta">Accuracy</span><strong>${metric(benchmark.accuracy)}</strong></div>
+    <div><span class="meta">Query labels</span><strong>${Number(benchmark.query_sample_size || 0)}</strong><small>${benchmark.needs_more_query_labels ? `${benchmark.needs_more_query_labels} more recommended` : "benchmark ready"}</small></div>
+  `;
 }
 
 function renderBackupPanel() {
@@ -1043,45 +1119,57 @@ function card(listing) {
   const sparkline = priceSparkline(listing.price_history);
   const market = marketBadge(listing.market_insight);
   const duplicate = Number(listing.duplicate_count || 1) > 1 ? `<span class="badge info">${Number(listing.duplicate_count) - 1} similar</span>` : "";
+  const matchBadge = listing.search_relevance ? `<span class="badge match">Match ${Number(listing.search_relevance.score || 0)}</span>` : "";
   const explanation = scoreExplanation(listing);
+  const matchExplanation = queryMatchExplanation(listing);
 
   return `
     <article class="card" style="--entry-index: ${Number(listing.id || 0) % 12}; --score: ${dealScore}">
       ${visual}
-      <div class="card-header">
-        <div class="listing-main">
-          <p class="title">${escapeHtml(listing.title)}</p>
-          <p class="listing-meta">
-            <span>${sellerMarkup(listing)}</span>
-            <span>${reputation}</span>
-            <span>${listing.seller_rating} stars</span>
-            <span>${formatAge(listing)}</span>
-            <span>${displayLocation(listing)}</span>
-          </p>
+      <div class="card-content">
+        <div class="card-header">
+          <div class="listing-main">
+            <p class="title">${escapeHtml(listing.title)}</p>
+            <p class="listing-meta">
+              <span>${sellerMarkup(listing)}</span>
+              <span>${reputation}</span>
+              <span>${listing.seller_rating} stars</span>
+              <span>${formatAge(listing)}</span>
+              <span>${displayLocation(listing)}</span>
+            </p>
+          </div>
+          <div class="badge-stack">${matchBadge}${badge}${market}${duplicate}${labelBadge}</div>
         </div>
-        <div class="badge-stack">${badge}${market}${duplicate}${labelBadge}</div>
-      </div>
-      <div class="price-row">
-        <div class="price">${formatMoney(listing.current_price)}</div>
-        ${sparkline}
-      </div>
-      ${score}
-      ${priceNote}
-      ${explanation}
-      ${reasons}
-      <p class="meta" data-msrp-result="${listing.id}"></p>
-      <div class="actions">
-        <button class="primary-action" data-view-listing="${listing.id}">View</button>
-        <button data-refresh-details="${listing.id}">Refresh</button>
-        <button data-open-url="${escapeHtml(listing.carousell_url)}">Open</button>
-        <button data-label="good" data-listing-id="${listing.id}" data-price="${listing.current_price}">Good</button>
-        <button data-label="skip" data-listing-id="${listing.id}" data-price="${listing.current_price}">Skip</button>
-        <button data-label="bad_deal" data-listing-id="${listing.id}" data-price="${listing.current_price}">Bad deal</button>
-        <button data-label="bought" data-listing-id="${listing.id}" data-price="${listing.current_price}">Bought</button>
-        <button data-label="spam" data-listing-id="${listing.id}" data-price="${listing.current_price}">Spam</button>
-        <button data-label="not_spam" data-listing-id="${listing.id}" data-price="${listing.current_price}">Not spam</button>
-        <button data-msrp="${listing.id}" data-title="${escapeHtml(listing.title)}" data-price="${listing.current_price}">MSRP</button>
-        <button data-block-seller="${listing.seller_id}" data-seller-name="${escapeHtml(listing.seller_name)}">Block</button>
+        <div class="listing-intelligence">
+          <div class="price-row">
+            <div class="price">${formatMoney(listing.current_price)}</div>
+            ${sparkline}
+          </div>
+          ${score}
+        </div>
+        ${priceNote}
+        ${matchExplanation}
+        ${explanation}
+        ${reasons}
+        <p class="meta" data-msrp-result="${listing.id}"></p>
+        <div class="actions card-actions">
+          <button class="primary-action" data-view-listing="${listing.id}">View</button>
+          <button data-open-url="${escapeHtml(listing.carousell_url)}">Open</button>
+          <button data-label="good" data-listing-id="${listing.id}" data-price="${listing.current_price}">Good</button>
+          <details class="more-actions">
+            <summary>More</summary>
+            <div class="more-actions-menu">
+              <button data-refresh-details="${listing.id}">Refresh details</button>
+              <button data-label="skip" data-listing-id="${listing.id}" data-price="${listing.current_price}">Not relevant</button>
+              <button data-label="bad_deal" data-listing-id="${listing.id}" data-price="${listing.current_price}">Bad deal</button>
+              <button data-label="bought" data-listing-id="${listing.id}" data-price="${listing.current_price}">Bought</button>
+              <button data-label="spam" data-listing-id="${listing.id}" data-price="${listing.current_price}">Spam</button>
+              <button data-label="not_spam" data-listing-id="${listing.id}" data-price="${listing.current_price}">Not spam</button>
+              <button data-msrp="${listing.id}" data-title="${escapeHtml(listing.title)}" data-price="${listing.current_price}">Find MSRP</button>
+              <button data-block-seller="${listing.seller_id}" data-seller-name="${escapeHtml(listing.seller_name)}">Block seller</button>
+            </div>
+          </details>
+        </div>
       </div>
     </article>
   `;
@@ -1120,8 +1208,34 @@ function openDetails(listing) {
 }
 
 function matchesQuery(listing, query) {
-  const text = `${listing.title} ${listing.description} ${listing.category}`.toLowerCase();
-  return text.includes(query.toLowerCase());
+  const tokens = searchTokens(query);
+  if (!tokens.length) return true;
+  const title = searchableClientText(listing.title);
+  const details = searchableClientText(`${listing.description || ""} ${listing.category || ""}`);
+  let score = 0;
+  let possible = 0;
+  for (const token of tokens) {
+    const weight = /\d/.test(token) ? 1.7 : token.length >= 5 ? 1.25 : 1;
+    possible += weight;
+    if (` ${title} `.includes(` ${token} `) || title.replaceAll(" ", "").includes(token)) score += weight;
+    else if (` ${details} `.includes(` ${token} `) || details.replaceAll(" ", "").includes(token)) score += weight * 0.45;
+  }
+  return possible > 0 && score / possible >= 0.28;
+}
+
+function searchTokens(value) {
+  const stopWords = new Set(["a", "an", "and", "for", "in", "of", "on", "the", "to", "with", "used", "new", "sale"]);
+  return [...new Set((searchableClientText(value).match(/[a-z]+|\d+[a-z]*|[a-z]+\d+[a-z0-9]*/g) || [])
+    .filter((token) => token.length >= 2 && !stopWords.has(token)))];
+}
+
+function searchableClientText(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/([a-z])(?=\d)|([0-9])(?=[a-z])/g, "$1$2 ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function collapseDuplicateGroups(listings) {
@@ -1229,6 +1343,26 @@ function scoreExplanation(listing) {
   `;
 }
 
+function queryMatchExplanation(listing) {
+  const match = listing.search_relevance;
+  if (!match) return "";
+  const matched = (match.matched_tokens || []).join(", ") || "none";
+  const missing = (match.missing_tokens || []).join(", ");
+  const exclusions = (match.excluded_matches || []).join(", ");
+  return `
+    <details class="score-explanation match-explanation">
+      <summary>Why this result?</summary>
+      <p>${escapeHtml(match.summary || `${match.score}/100 relevance`)}</p>
+      <div class="explanation-chips">
+        <span>Matched ${escapeHtml(matched)}</span>
+        ${missing ? `<span>Missing ${escapeHtml(missing)}</span>` : ""}
+        ${exclusions ? `<span>Excluded ${escapeHtml(exclusions)}</span>` : ""}
+        ${match.intent && match.intent !== "any" ? `<span>${escapeHtml(match.intent.replaceAll("_", " "))}</span>` : ""}
+      </div>
+    </details>
+  `;
+}
+
 function sellerBadge(reputation = {}) {
   const total = Number(reputation.total || 0);
   const tone = total ? reputation.tone : "neutral";
@@ -1299,6 +1433,13 @@ function sortListings(listings, mode) {
     if (mode === "price_low") return Number(a.current_price || 0) - Number(b.current_price || 0);
     if (mode === "price_high") return Number(b.current_price || 0) - Number(a.current_price || 0);
     if (mode === "recent") return getListingAgeHours(a) - getListingAgeHours(b);
+    const aRelevance = Number(a.search_relevance?.score || 0);
+    const bRelevance = Number(b.search_relevance?.score || 0);
+    if (aRelevance || bRelevance) {
+      const aRank = aRelevance + Number(a.score?.deal_score || 0) * 0.25;
+      const bRank = bRelevance + Number(b.score?.deal_score || 0) * 0.25;
+      return bRank - aRank;
+    }
     return Number(b.score?.deal_score || 0) - Number(a.score?.deal_score || 0);
   });
 }
@@ -1338,10 +1479,19 @@ function resetButtonBusy(button) {
 function showToast(message, type = "info", options = {}) {
   const root = document.getElementById("toast-root");
   if (!root) return;
+  const dedupeKey = String(options.dedupeKey || `${type}:${message}`);
+  const existing = [...root.children].find((item) => item.dataset.dedupeKey === dedupeKey && item.dataset.state !== "closing");
+  if (existing) {
+    clearTimeout(existing.timer);
+    root.prepend(existing);
+    existing.timer = setTimeout(() => dismissToast(existing), options.duration || (type === "error" ? 5200 : 3200));
+    return existing;
+  }
   const toast = document.createElement("div");
   const safeType = ["success", "error", "info", "warn"].includes(type) ? type : "info";
   toast.className = `toast toast-${safeType}`;
   toast.dataset.state = "entering";
+  toast.dataset.dedupeKey = dedupeKey;
   toast.setAttribute("role", safeType === "error" ? "alert" : "status");
   toast.innerHTML = `
     <span class="toast-mark" aria-hidden="true"></span>
@@ -1354,6 +1504,8 @@ function showToast(message, type = "info", options = {}) {
     toast.dataset.state = "open";
   });
   toast.timer = setTimeout(() => dismissToast(toast), options.duration || (safeType === "error" ? 5200 : 3200));
+  [...root.children].slice(4).forEach((item) => dismissToast(item));
+  return toast;
 }
 
 function dismissToast(toast) {

@@ -26,6 +26,8 @@ export async function saveRefinedListingLabel(listingId, rating, body = {}) {
     relevance_score: Number(body.relevance_score ?? relevance.score),
     relevance_type: body.relevance_type || relevance.type,
     relevance_flags: normalizeStringList(body.relevance_flags || body.issue_flags || relevance.flags),
+    search_query: String(body.search_query || body.query || "").trim().slice(0, 200),
+    search_intent: String(body.search_intent || "any").trim().slice(0, 40),
     notes: String(body.notes || "").slice(0, 500),
     timestamp: new Date().toISOString()
   };

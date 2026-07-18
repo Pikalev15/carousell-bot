@@ -20,7 +20,7 @@
             <span></span>
           </span>
           <div class="brand-copy">
-            <p class="eyebrow">Local PC test</p>
+            <p class="eyebrow">Deal intelligence</p>
             <h1>Carousell Bot</h1>
           </div>
         </div>
@@ -50,6 +50,10 @@
             <span>Filters</span>
           </button>
         </nav>
+        <div class="sidebar-utilities" aria-label="Display controls">
+          <button id="theme-toggle" class="utility-button" type="button" aria-pressed="false">Light mode</button>
+          <button id="density-toggle" class="utility-button" type="button" aria-pressed="false">Compact</button>
+        </div>
         <button id="alerts-toggle" class="alert-bell" type="button" aria-label="Open alerts" aria-expanded="false" aria-controls="alerts-panel">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg>
           <span id="alerts-count">0</span>
@@ -64,8 +68,6 @@
               <h2>Dashboard</h2>
             </div>
             <div class="toolbar-actions">
-              <button id="theme-toggle" type="button" aria-pressed="false">Light mode</button>
-              <button id="density-toggle" type="button" aria-pressed="false">Compact</button>
               <button id="refresh">Refresh</button>
             </div>
           </div>
@@ -136,6 +138,12 @@
               <option value="1">Last hour</option>
               <option value="24">Today</option>
               <option value="168">This week</option>
+            </select>
+            <select id="search-intent" aria-label="Listing intent">
+              <option value="any">Any type</option>
+              <option value="component">Component only</option>
+              <option value="full_pc">Full PC only</option>
+              <option value="accessory">Accessories only</option>
             </select>
             <select id="search-sort" aria-label="Search result sort">
               <option value="score" selected>Best score</option>
@@ -244,8 +252,8 @@
         <section id="settings" class="view">
           <div class="toolbar">
             <div>
-              <p class="eyebrow">Blacklist control</p>
-              <h2>Filters</h2>
+              <p class="eyebrow">System preferences</p>
+              <h2>Settings</h2>
             </div>
           </div>
           <form id="filter-form" class="form-row">
@@ -262,6 +270,7 @@
           <h3>Training</h3>
           <div class="training-panel">
             <div id="training-stats" class="training-stats"></div>
+            <div id="training-benchmark" class="training-benchmark"></div>
             <button id="retrain-model">Retrain from labels</button>
           </div>
           <h3>Telegram Notifications</h3>
@@ -340,6 +349,7 @@
     <script src="/app.js"></script>
     <script src="/refined-feedback.js"></script>
     <script src="/duplicate-ui.js"></script>
+    <script src="/likes-ui.js"></script>
     <script src="/notification-detail.js"></script>
   </body>
 </html>

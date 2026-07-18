@@ -11,7 +11,8 @@ import { authorizeDashboardRequest, dashboardAuthHeaders, warnIfDashboardUnauthe
 import { createDailyDigestJob } from "./jobs/dailyDigest.js";
 import { getDigestEmailConfig, maskDigestEmailConfig, sendDigestTestEmail } from "./services/emailService.js";
 import { maskTelegramConfig, notifyAlert, parseTelegramCommand, sendTelegramTestMessage, startTelegramCommandPolling, updateTelegramConfig } from "./notifier.js";
-import { analyzeListingRelevance, inferPreciseCategory } from "./relevanceClassifier.js";
+import { analyzeListingRelevance, analyzeQueryMatch, inferPreciseCategory, parseSearchQuery } from "./relevanceClassifier.js";
+import { buildSearchAccuracyBenchmark } from "./searchBenchmark.js";
 import { SearchScheduler } from "./scheduler.js";
 import {
   addActivity,
@@ -69,7 +70,7 @@ const plusRuntime = installPlusRuntime({
 const handleTelegramCommand = plusRuntime.handleTelegramCommand;
 let started = false;
 
-export { server, dailyDigest, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert };
+export { server, dailyDigest, buildListings, buildDuplicateGroups, buildMarketInsights, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert, evaluateLearnedAlertGate };
 
 export function startServer() {
   if (started) return server;
@@ -244,14 +245,15 @@ async function handleApi(request, response, url) {
   if (request.method === "POST" && url.pathname === "/api/search") {
     const body = await readBody(request);
     const query = String(body.query || "").trim();
+    const parsedQuery = parseSearchQuery(query, { intent: body.intent });
     const mode = body.mode === "more" ? "more" : body.mode === "local" ? "local" : "web";
-    if (!query) {
+    if (!query || !parsedQuery.search_text) {
       sendJson(response, 400, { error: "query is required" });
       return;
     }
 
     await recordSearch(query, mode);
-    const webSearch = mode !== "local" ? await searchAndStoreWebResults(query, mode, { alert: true }) : null;
+    const webSearch = mode !== "local" ? await searchAndStoreWebResults(parsedQuery.search_text, mode, { alert: true, sourceQuery: query }) : null;
 
     const state = await getState();
     sendJson(response, 200, {
@@ -263,6 +265,7 @@ async function handleApi(request, response, url) {
       updated: webSearch?.updated || 0,
       hydration_job: webSearch?.job || null,
       warning: webSearch?.warning || null,
+      parsed_query: parsedQuery,
       status: webSearch?.status ?? null,
       ok: webSearch?.ok ?? null,
       result_count: webSearch?.result_count ?? null,
@@ -280,6 +283,7 @@ async function handleApi(request, response, url) {
         maxPrice: body.max_price,
         maxAgeHours: body.max_age_hours,
         location: body.location,
+        intent: parsedQuery.intent,
         includeFiltered: Boolean(body.include_filtered)
       }),
       history: await readJson("searches")
@@ -429,6 +433,12 @@ async function handleApi(request, response, url) {
 
   if (request.method === "GET" && url.pathname === "/api/watchlist") {
     sendJson(response, 200, await getWatchedSearches());
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/training/benchmark") {
+    const state = await getState();
+    sendJson(response, 200, buildSearchAccuracyBenchmark(state.listings, state.labels));
     return;
   }
 
@@ -654,7 +664,9 @@ async function searchDiagnosticsSnapshot() {
 }
 
 function buildListings(state, query = "", options = {}) {
-  const needle = String(query || "").trim().toLowerCase();
+  const parsedQuery = parseSearchQuery(query, { intent: options.intent });
+  const hasQueryRules = Boolean(parsedQuery.tokens.length || parsedQuery.exclusions.length || parsedQuery.category || parsedQuery.intent !== "any");
+  const effectiveQuery = [parsedQuery.raw || parsedQuery.search_text, options.intent && options.intent !== "any" && !/\b(?:type|intent):/i.test(parsedQuery.raw) ? `type:${options.intent}` : ""].filter(Boolean).join(" ");
   const minPrice = options.minPrice === null || options.minPrice === undefined || options.minPrice === "" ? null : Number(options.minPrice);
   const maxPrice = options.maxPrice === null || options.maxPrice === undefined || options.maxPrice === "" ? null : Number(options.maxPrice);
   const maxAgeHours = options.maxAgeHours === null || options.maxAgeHours === undefined || options.maxAgeHours === "" ? null : Number(options.maxAgeHours);
@@ -664,15 +676,20 @@ function buildListings(state, query = "", options = {}) {
   const marketInsights = buildMarketInsights(state.listings || []);
   const duplicateGroups = buildDuplicateGroups(state.listings || []);
   return state.listings
-    .filter((listing) => {
-      if (!needle) return true;
-      return `${listing.title} ${listing.description} ${listing.category}`.toLowerCase().includes(needle);
-    })
-    .map((listing) => {
-      const normalizedListing = {
+    .map((listing) => ({ listing, queryMatch: hasQueryRules ? analyzeQueryMatch(listing, effectiveQuery) : null }))
+    .filter(({ queryMatch }) => !hasQueryRules || queryMatch.score >= 22)
+    .map(({ listing, queryMatch }) => {
+      const baseListing = {
         ...listing,
         location: resolveListingLocation(listing),
         market_median: marketMedians[listing.category] || null
+      };
+      const relevance = analyzeListingRelevance(baseListing, effectiveQuery);
+      const normalizedListing = {
+        ...baseListing,
+        relevance_analysis: relevance,
+        relevance_score: relevance.score,
+        relevance_flags: relevance.flags
       };
       const explicitLabel = labelsByListing.get(Number(listing.id));
       const prediction = predictPreference(normalizedListing, state.trainingModel);
@@ -700,6 +717,8 @@ function buildListings(state, query = "", options = {}) {
         training: prediction,
         seller_reputation: sellerReputation(normalizedListing.seller_id, state.trainingModel),
         price_history: getPriceHistory(normalizedListing.id),
+        search_relevance: queryMatch,
+        relevance_analysis: relevance,
         score
       };
     })
@@ -710,7 +729,10 @@ function buildListings(state, query = "", options = {}) {
       if (maxAgeHours !== null && getListingAgeHours(listing) > maxAgeHours) return false;
       if (locationNeedle && !String(listing.location || "").toLowerCase().includes(locationNeedle)) return false;
       return true;
-    });
+    })
+    .sort((a, b) => hasQueryRules
+      ? Number(b.search_relevance?.score || 0) - Number(a.search_relevance?.score || 0) || Number(b.score?.deal_score || 0) - Number(a.score?.deal_score || 0)
+      : 0);
 }
 
 function buildScoreExplanation(score, classification, prediction, marketInsight) {
@@ -1019,6 +1041,7 @@ async function recordSearch(query, mode) {
 
 async function searchAndStoreWebResults(query, mode, options = {}) {
   try {
+    const sourceQuery = String(options.sourceQuery || query || "").trim();
     const webSearch = await searchCarousell(query, { limit: "all", anchorLimit: mode === "more" ? 500 : 240, hydrateDetails: false });
     const listings = await readJson("listings");
     const existing = new Map(listings.map((listing, index) => [listing.carousell_id, { listing, index }]));
@@ -1060,10 +1083,10 @@ async function searchAndStoreWebResults(query, mode, options = {}) {
 
     let job = null;
     if (options.awaitHydration) {
-      job = await hydrateCandidatesNow(hydrationCandidates, { query, mode, options, initialPriceDrops: priceDrops });
+      job = await hydrateCandidatesNow(hydrationCandidates, { query: sourceQuery, mode, options, initialPriceDrops: priceDrops });
     } else {
-      await handleSearchAlerts({ additions: [], priceDrops, query, options });
-      job = startHydrationJob(hydrationCandidates, { query, mode, options });
+      await handleSearchAlerts({ additions: [], priceDrops, query: sourceQuery, options });
+      job = startHydrationJob(hydrationCandidates, { query: sourceQuery, mode, options });
     }
 
     return attachScrapeMetadataToSearchSummary({
@@ -1074,7 +1097,7 @@ async function searchAndStoreWebResults(query, mode, options = {}) {
       price_drops: priceDrops.length,
       job,
       scrape_results: Array.isArray(webSearch.scrape_results) ? webSearch.scrape_results : []
-    }, webSearch, { query });
+    }, webSearch, { query: sourceQuery });
   } catch (error) {
     error.message = `Web search failed: ${error.message}`;
     throw error;
@@ -1234,15 +1257,21 @@ async function handleSearchAlerts({ additions, priceDrops, query, options }) {
   const state = await getState();
   const threshold = Number(state.config.dealThreshold || 70);
   const watch = options.watch || null;
-  const addedBuilt = buildListings({ ...state, listings: additions }, "", { includeFiltered: false });
+  const addedBuilt = buildListings({ ...state, listings: additions }, query, { includeFiltered: false });
   const targets = listPriceTargets(state.config);
 
   for (const listing of addedBuilt) {
+    const gate = evaluateLearnedAlertGate(listing, state.trainingModel);
+    if (!gate.allowed) {
+      addActivity({ type: "alert_feedback_suppressed", title: "Learned alert suppression", detail: `${listing.title}: ${gate.reasons.join(", ")}`, listing_id: listing.id, watch_id: watch?.id || null });
+      continue;
+    }
     for (const target of matchingPriceTargets(listing, targets)) {
       if (getListingAgeHours(listing) > 72) continue;
       await emitAlert(listingAlertPayload(listing, {
         type: "price_target",
         watch_id: watch?.id || null,
+        search_query: query,
         alert_key: alertKey({ type: "price_target", listing_id: listing.id, watch_id: `target-${target.id}` }),
         reason: `Price target hit: ${target.query} under ${formatMoney(target.target_price)}`
       }));
@@ -1253,19 +1282,23 @@ async function handleSearchAlerts({ additions, priceDrops, query, options }) {
     await emitAlert(listingAlertPayload(listing, {
       type: watch ? "restock" : "new_deal",
       watch_id: watch?.id || null,
+      search_query: query,
       alert_key: alertKey({ type: watch ? "restock" : "new_deal", listing_id: listing.id, watch_id: watch?.id || null }),
       reason: watch ? `New match from ${watch.query}` : `New deal from ${query}`
     }));
   }
 
   for (const drop of priceDrops) {
-    const builtDrop = buildListings({ ...state, listings: [drop.listing] }, "", { includeFiltered: false })[0] || drop.listing;
+    const builtDrop = buildListings({ ...state, listings: [drop.listing] }, query, { includeFiltered: false })[0] || drop.listing;
+    const gate = evaluateLearnedAlertGate(builtDrop, state.trainingModel, { allowLowPreference: true });
+    if (!gate.allowed) continue;
     for (const target of matchingPriceTargets(builtDrop, targets)) {
       if (Number(drop.newPrice || 0) <= Number(target.target_price || 0)) {
         await emitAlert(listingAlertPayload(builtDrop, {
           type: "price_target",
           message: `${formatMoney(drop.oldPrice)} -> ${formatMoney(drop.newPrice)} hit ${target.query}`,
           watch_id: watch?.id || null,
+          search_query: query,
           alert_key: alertKey({ type: "price_target", listing_id: builtDrop.id, watch_id: `target-${target.id}`, price: drop.newPrice }),
           reason: `Price target hit after drop from ${formatMoney(drop.oldPrice)}`
         }));
@@ -1275,6 +1308,7 @@ async function handleSearchAlerts({ additions, priceDrops, query, options }) {
       type: "price_drop",
       message: `${formatMoney(drop.oldPrice)} -> ${formatMoney(drop.newPrice)} from ${query}`,
       watch_id: watch?.id || null,
+      search_query: query,
       alert_key: alertKey({ type: "price_drop", listing_id: drop.listing.id, watch_id: watch?.id || null, price: drop.newPrice }),
       reason: `Price dropped from ${formatMoney(drop.oldPrice)}`
     }));
@@ -1297,6 +1331,7 @@ function listingAlertPayload(listing, extra = {}) {
     seller_rating: listing.seller_rating || 0,
     condition: listing.condition || "",
     explanation: score.explanation?.summary || "",
+    relevance: listing.search_relevance?.summary || listing.relevance_analysis?.reasons?.join(", ") || "",
     market_rating: listing.market_insight?.rating || "",
     description: listing.description || ""
   };
@@ -1360,8 +1395,10 @@ async function handleCoreTelegramCommand(text) {
 
   if (command === "/search") {
     if (!args) return "Usage: /search gpu";
+    const parsedQuery = parseSearchQuery(args);
+    if (!parsedQuery.search_text) return "Search needs at least one positive term.";
     await recordSearch(args, "telegram");
-    const result = await searchAndStoreWebResults(args, "web", { alert: false });
+    const result = await searchAndStoreWebResults(parsedQuery.search_text, "web", { alert: false, sourceQuery: args });
     const state = await getState();
     const listings = rankTelegramSearchResults(buildListings(state, args, { includeFiltered: false, minPrice: 1 }), args).slice(0, 5);
     return [`Search: ${args}`, `Added ${result.added}, updated ${result.updated}. Hydration job ${result.job?.id || "none"}.`, formatListingLines(listings)].filter(Boolean).join("\n");
@@ -1421,6 +1458,20 @@ async function handleCoreTelegramCommand(text) {
   return `Unknown command: ${command}. Try /help.`;
 }
 
+function evaluateLearnedAlertGate(listing = {}, model = {}, options = {}) {
+  const reasons = [];
+  const preference = Number(listing.training?.preference_score ?? listing.score?.training_preference ?? 50);
+  const relevance = Number(listing.search_relevance?.score ?? listing.relevance_score ?? listing.relevance_analysis?.score ?? 70);
+  const minimumPreference = Number(model.alert_feedback?.min_preference ?? 30);
+  const flags = new Set([...(listing.search_relevance?.flags || []), ...(listing.relevance_flags || []), ...(listing.relevance_analysis?.flags || [])]);
+  if (!options.allowLowPreference && preference < minimumPreference) reasons.push(`preference ${preference} below learned minimum ${minimumPreference}`);
+  if (relevance < 42) reasons.push(`relevance ${relevance}/100`);
+  for (const flag of ["excluded_term_match", "intent_mismatch", "query_wtb_or_service", "wtb_or_service", "irrelevant_school_book"]) {
+    if (flags.has(flag)) reasons.push(flag.replaceAll("_", " "));
+  }
+  return { allowed: reasons.length === 0, preference, relevance, minimum_preference: minimumPreference, reasons };
+}
+
 async function telegramStatusMessage(state) {
   const config = state.config || {};
   const status = scheduler.status(config);
@@ -1438,6 +1489,8 @@ async function telegramStatusMessage(state) {
   const priceTargets = listPriceTargets(config);
   const deals = buildListings(state, "", { includeFiltered: false }).filter((listing) => listing.score?.is_deal);
   const cleanListings = buildListings(state, "", { includeFiltered: false });
+  const benchmark = buildSearchAccuracyBenchmark(state.listings, state.labels);
+  const alertFeedback = state.trainingModel?.alert_feedback || {};
 
   return [
     "Carousell Bot Status",
@@ -1463,11 +1516,13 @@ async function telegramStatusMessage(state) {
     `- Quiet hours: ${alertSettings.quietHours.enabled ? `${alertSettings.quietHours.start}-${alertSettings.quietHours.end}` : "off"}`,
     `- Digest: ${alertSettings.digest.enabled ? `${alertSettings.digest.time}, top ${alertSettings.digest.maxItems}, score ${alertSettings.digest.minScore}+` : "off"}`,
     `- Queued: ${queued.length}, unread dashboard alerts: ${unread}`,
+    `- Learned preference floor: ${Number(alertFeedback.min_preference ?? 30)}/100 from ${Number(alertFeedback.total || 0)} decisions`,
     failedAlerts.length ? `- Recent alert failures: ${failedAlerts.map((alert) => alert.title || alert.error).join("; ")}` : "",
     "",
     "Listings",
     `- Stored: ${state.listings?.length || 0}, clean visible: ${cleanListings.length}, deal candidates: ${deals.length}`,
     `- Recent searches: ${state.searches?.length || 0}`,
+    `- Search benchmark: ${benchmark.accuracy === null ? "needs labels" : `${benchmark.accuracy}% accuracy, ${benchmark.precision}% precision`} (${benchmark.query_sample_size} query-linked labels)`,
     "",
     recentErrors.length ? ["Recent Issues", ...recentErrors.map((item) => `- ${item.title || item.type}: ${item.detail || "no details"}`)].join("\n") : "Recent Issues\n- none"
   ].flat().filter(Boolean).join("\n").slice(0, 3900);
@@ -1510,7 +1565,8 @@ function formatListingLines(listings) {
     .map((listing, index) => {
       const score = listing.score?.deal_score ?? "n/a";
       const why = listing.score?.explanation?.summary ? ` | ${listing.score.explanation.summary}` : "";
-      return `${index + 1}. ${listing.title} - ${formatMoney(listing.current_price)} | Score ${score} | ${listing.location || "location not listed"}${why}\n${listing.carousell_url}`;
+      const match = listing.search_relevance?.summary ? ` | Match ${listing.search_relevance.summary}` : "";
+      return `${index + 1}. ${listing.title} - ${formatMoney(listing.current_price)} | Score ${score} | ${listing.location || "location not listed"}${match}${why}\n${listing.carousell_url}`;
     })
     .join("\n");
 }
@@ -1539,7 +1595,8 @@ function telegramSearchRelevance(listing, query) {
   const queryText = String(query || "").toLowerCase();
   const relevance = analyzeListingRelevance(listing, query);
   const category = inferPreciseCategory(listing, listing.category || "");
-  let score = Number(relevance.score || 0) + Number(listing.score?.deal_score || 0) * 0.2;
+  const queryMatch = analyzeQueryMatch(listing, query);
+  let score = Number(queryMatch.score || 0) * 0.8 + Number(relevance.score || 0) * 0.2 + Number(listing.score?.deal_score || 0) * 0.15;
 
   if (/\b(?:gpu|graphics card|rtx|gtx|geforce|radeon)\b/i.test(queryText)) {
     if (category === "graphics card") score += 55;
@@ -1640,7 +1697,8 @@ async function handleTelegramCallback(callback) {
   };
   if (ratingAliases[callback.action]) {
     const rating = ratingAliases[callback.action];
-    await saveListingLabel(listingId, rating, { asked_price: listing.current_price });
+    const sourceAlert = getAlerts({ limit: 500 }).find((alert) => Number(alert.listing_id) === listingId);
+    await saveListingLabel(listingId, rating, { asked_price: listing.current_price, search_query: sourceAlert?.search_query || "" });
     return `Marked ${rating.replace("_", " ")}`;
   }
 
@@ -1666,6 +1724,8 @@ async function saveListingLabel(listingId, rating, body = {}) {
     user_rating: rating,
     asked_price: body.asked_price || null,
     negotiated_price: body.negotiated_price || null,
+    search_query: String(body.search_query || body.query || "").trim().slice(0, 200),
+    search_intent: String(body.search_intent || "any").trim().slice(0, 40),
     timestamp: new Date().toISOString()
   });
   await writeJson("labels", next);

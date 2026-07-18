@@ -121,6 +121,31 @@ export function upsertListing(listing) {
 }
 
 export function bulkUpsertListings(listings) {
+  if (!db) {
+    const current = readCollection("listings");
+    const byId = new Map(current.map((item, index) => [Number(item.id), index]));
+    const byCarousellId = new Map(current.map((item, index) => [item.carousell_id, index]));
+    let nextId = Math.max(0, ...current.map((item) => Number(item.id || 0))) + 1;
+    const results = [];
+    for (const listing of listings || []) {
+      const idIndex = listing.id ? byId.get(Number(listing.id)) : undefined;
+      const carousellIndex = listing.carousell_id ? byCarousellId.get(listing.carousell_id) : undefined;
+      const existingIndex = idIndex ?? carousellIndex;
+      const existing = existingIndex === undefined ? null : current[existingIndex];
+      const next = { ...existing, ...listing, id: existing?.id || listing.id || nextId++ };
+      if (existingIndex === undefined) {
+        const index = current.length;
+        current.push(next);
+        byId.set(Number(next.id), index);
+        byCarousellId.set(next.carousell_id, index);
+      } else {
+        current[existingIndex] = next;
+      }
+      results.push(next);
+    }
+    if (results.length) writeCollection("listings", current);
+    return results;
+  }
   return runTransaction(() => listings.map((item) => upsertListing(item)));
 }
 
@@ -277,19 +302,28 @@ export function markAlertsRead() {
     return { marked, read_at: readAt };
   }
 
-  const rows = db.prepare("SELECT id, payload FROM alerts WHERE read_at IS NULL").all();
-  if (!rows.length) return { marked: 0, read_at: readAt };
-
-  runTransaction((items) => {
-    const update = db.prepare("UPDATE alerts SET read_at = ?, payload = ? WHERE id = ?");
-    for (const row of items) {
-      const payload = parsePayload(row.payload) || {};
-      const nextPayload = { ...payload, read_at: readAt };
-      update.run(readAt, JSON.stringify(nextPayload), row.id);
-    }
-  }, rows);
+  let result;
+  try {
+    result = db.prepare(`
+      UPDATE alerts
+      SET read_at = ?,
+          payload = json_set(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END, '$.read_at', ?)
+      WHERE read_at IS NULL
+    `).run(readAt, readAt);
+  } catch {
+    const rows = db.prepare("SELECT id, payload FROM alerts WHERE read_at IS NULL").all();
+    if (!rows.length) return { marked: 0, read_at: readAt };
+    runTransaction((items) => {
+      const update = db.prepare("UPDATE alerts SET read_at = ?, payload = ? WHERE id = ?");
+      for (const row of items) {
+        const payload = parsePayload(row.payload) || {};
+        update.run(readAt, JSON.stringify({ ...payload, read_at: readAt }), row.id);
+      }
+    }, rows);
+    result = { changes: rows.length };
+  }
   bumpStoreVersion("alerts");
-  return { marked: rows.length, read_at: readAt };
+  return { marked: Number(result.changes || 0), read_at: readAt };
 }
 
 export function addActivity(input) {

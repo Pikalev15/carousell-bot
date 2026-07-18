@@ -1,4 +1,4 @@
-import { labelTrainingEffect, normalizeRefinedRating } from "./relevanceClassifier.js";
+import { extractModelFamilies, labelTrainingEffect, normalizeRefinedRating } from "./relevanceClassifier.js";
 
 const STOP_WORDS = new Set([
   "the",
@@ -21,6 +21,7 @@ export function trainModel(listings, labels) {
   const tokenStats = {};
   const sellerStats = {};
   const categoryStats = {};
+  const modelStats = {};
   const issueStats = {};
   const labelCounts = {};
   const dealStats = {
@@ -34,6 +35,8 @@ export function trainModel(listings, labels) {
   let positive = 0;
   let negative = 0;
   let neutral = 0;
+  let alertAccepted = 0;
+  let alertDismissed = 0;
 
   for (const label of labels) {
     const listing = listingById.get(Number(label.listing_id));
@@ -49,6 +52,8 @@ export function trainModel(listings, labels) {
 
     if (effect.polarity > 0) positive += 1;
     if (effect.polarity < 0) negative += 1;
+    if (["great_deal", "good_deal", "fair_deal", "bought", "not_spam"].includes(userRating)) alertAccepted += 1;
+    if (["bad_deal", "overpriced", "accessory_only", "wrong_category", "irrelevant", "wtb_service", "spam", "bad_pricer"].includes(userRating)) alertDismissed += 1;
     if (userRating === "bad_deal" || userRating === "overpriced") dealStats.bad_deal_count += 1;
     if (userRating === "duplicate_listing") dealStats.duplicate_count += 1;
     if (userRating === "accessory_only") dealStats.accessory_count += 1;
@@ -68,6 +73,12 @@ export function trainModel(listings, labels) {
     if (effect.polarity > 0) categoryStats[category].good += weight;
     if (effect.polarity < 0) categoryStats[category].bad += weight;
 
+    for (const family of extractModelFamilies(listing)) {
+      modelStats[family] ||= { good: 0, bad: 0 };
+      if (effect.polarity > 0) modelStats[family].good += weight;
+      if (effect.polarity < 0) modelStats[family].bad += weight;
+    }
+
     for (const flag of label.relevance_flags || label.issue_flags || []) {
       issueStats[flag] ||= { good: 0, bad: 0 };
       if (effect.polarity > 0) issueStats[flag].good += weight;
@@ -80,7 +91,7 @@ export function trainModel(listings, labels) {
   }
 
   return {
-    version: 2,
+    version: 3,
     trained_at: new Date().toISOString(),
     example_count: positive + negative,
     positive_count: positive,
@@ -91,10 +102,13 @@ export function trainModel(listings, labels) {
     token_weights: calculateTokenWeights(tokenStats),
     seller_weights: calculateSellerWeights(sellerStats),
     category_weights: calculateTokenWeights(categoryStats),
+    model_weights: calculateTokenWeights(modelStats),
     issue_weights: calculateTokenWeights(issueStats),
     seller_stats: sellerStats,
     category_stats: categoryStats,
-    issue_stats: issueStats
+    model_stats: modelStats,
+    issue_stats: issueStats,
+    alert_feedback: buildAlertFeedback(alertAccepted, alertDismissed)
   };
 }
 
@@ -124,6 +138,13 @@ export function predictPreference(listing, model) {
     reasons.push(`category ${categoryWeight > 0 ? "+" : ""}${Math.round(categoryWeight)}`);
   }
 
+  for (const family of extractModelFamilies(listing)) {
+    const weight = model.model_weights?.[family];
+    if (!weight) continue;
+    score += weight * 1.1;
+    reasons.push(`model ${family} ${weight > 0 ? "+" : ""}${Math.round(weight)}`);
+  }
+
   const relevanceFlags = listing.relevance_flags || listing.relevance_analysis?.flags || listing.quality_flags || [];
   for (const flag of relevanceFlags) {
     const weight = model.issue_weights?.[flag];
@@ -150,6 +171,19 @@ export function predictPreference(listing, model) {
     preference_score: Math.max(0, Math.min(100, Math.round(score))),
     confidence: Math.min(1, model.example_count / 30),
     reasons: reasons.slice(0, 7)
+  };
+}
+
+function buildAlertFeedback(accepted, dismissed) {
+  const total = accepted + dismissed;
+  const dismissedRatio = total ? dismissed / total : 0;
+  const minPreference = total < 6 ? 30 : dismissedRatio >= 0.6 ? 52 : dismissedRatio >= 0.35 ? 42 : 32;
+  return {
+    total,
+    accepted,
+    dismissed,
+    accepted_ratio: total ? Number((accepted / total).toFixed(3)) : null,
+    min_preference: minPreference
   };
 }
 

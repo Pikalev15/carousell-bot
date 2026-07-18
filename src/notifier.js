@@ -475,6 +475,7 @@ export function formatAlertMessage(alert) {
     alert.condition || "",
     alert.seller_name ? `Seller ${alert.seller_name}${alert.seller_rating ? ` (${alert.seller_rating} stars)` : ""}` : "",
     alert.explanation || "",
+    alert.relevance ? `Match ${alert.relevance}` : "",
     alert.market_rating ? `Market ${alert.market_rating}` : "",
     alert.reason || ""
   ].filter(Boolean);

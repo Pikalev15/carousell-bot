@@ -14,6 +14,7 @@ export async function hydrateCarousellListings(listings, options = {}) {
   const browser = await getSharedBrowser();
   const concurrency = Math.max(1, Math.min(4, Number(options.concurrency || 2)));
   const jitterMs = Math.max(0, Number(options.jitterMs || 0));
+  const maxAttempts = Math.max(1, Math.min(3, Number(options.maxAttempts || 1)));
   const hydrated = new Array(candidates.length);
   let cursor = 0;
 
@@ -22,7 +23,13 @@ export async function hydrateCarousellListings(listings, options = {}) {
       const index = cursor;
       cursor += 1;
       if (jitterMs) await delay(Math.round(Math.random() * jitterMs));
-      hydrated[index] = await hydrateOne(browser, candidates[index]);
+      let result;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        result = await hydrateOne(browser, candidates[index]);
+        if (!result?.hydration_error_at || attempt === maxAttempts) break;
+        await delay(250 * attempt);
+      }
+      hydrated[index] = result;
     }
   }
 
@@ -85,8 +92,14 @@ async function hydrateOne(browser, listing) {
   let page;
   try {
     page = await browser.newPage({ locale: "en-SG", timezoneId: "Asia/Singapore", userAgent: USER_AGENT });
+    await page.route("**/*", (route) => {
+      const type = route.request().resourceType();
+      if (type === "image" || type === "media" || type === "font") return route.abort();
+      return route.continue();
+    });
     await page.goto(normalizeUrl(listing.carousell_url || listing.url), { waitUntil: "domcontentloaded", timeout: 18000 });
-    await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
+    await page.waitForFunction(() => (document.body?.innerText || "").length > 400, { timeout: 3500 }).catch(() => {});
+    await page.waitForTimeout(250);
     await expandDetailSections(page);
     const details = await readDetailPage(page);
     const seller = extractSellerFromDetails(details, listing.seller_name);
@@ -109,8 +122,12 @@ async function hydrateOne(browser, listing) {
       details_scraped_at: new Date().toISOString(),
       scraped_at: new Date().toISOString()
     };
-  } catch {
-    return { ...listing, hydration_error_at: new Date().toISOString() };
+  } catch (error) {
+    return {
+      ...listing,
+      hydration_error_at: new Date().toISOString(),
+      hydration_error: String(error?.message || "Listing detail hydration failed").slice(0, 240)
+    };
   } finally {
     await page?.close().catch(() => {});
   }

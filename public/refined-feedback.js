@@ -1,17 +1,3 @@
-(() => {
-  const current = document.currentScript;
-  const duplicateScript = document.createElement("script");
-  duplicateScript.src = "/duplicate-ui.js";
-  duplicateScript.async = false;
-  duplicateScript.addEventListener("load", () => {
-    const likesScript = document.createElement("script");
-    likesScript.src = "/likes-ui.js";
-    likesScript.async = false;
-    duplicateScript.insertAdjacentElement("afterend", likesScript);
-  });
-  current?.insertAdjacentElement("afterend", duplicateScript);
-})();
-
 const REFINED_FEEDBACK_OPTIONS = [
   ["great_deal", "Great deal"],
   ["good_deal", "Good deal"],
@@ -60,7 +46,9 @@ document.addEventListener("click", async (event) => {
         listing_id: listingId,
         rating,
         asked_price: price,
-        relevance_flags: ISSUE_FEEDBACK.has(rating) ? rating : ""
+        relevance_flags: ISSUE_FEEDBACK.has(rating) ? rating : "",
+        search_query: typeof state !== "undefined" ? state.lastQuery : "",
+        search_intent: typeof state !== "undefined" ? state.searchIntent : "any"
       })
     });
     const payload = await response.json().catch(() => ({}));
@@ -137,6 +125,10 @@ function allKnownListings() {
 }
 
 function showRefinedFeedbackToast(message, type = "info") {
+  if (typeof globalThis.showToast === "function") {
+    globalThis.showToast(message, type, { dedupeKey: `feedback:${type}:${message}` });
+    return;
+  }
   const root = document.getElementById("toast-root");
   if (!root) return;
   const toast = document.createElement("div");

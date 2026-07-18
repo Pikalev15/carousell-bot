@@ -10,7 +10,7 @@ test("serves core and roadmap API endpoints", async () => {
   process.env.CAROUSELL_DB_PATH = path.join(tempDir, "test.db");
   const cacheKey = Date.now();
   await assert.doesNotReject(() => import("../src/store.js"));
-  const { server, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert } = await import(`../src/server.js?db=${cacheKey}`);
+  const { server, evaluateLearnedAlertGate, handleTelegramCommand, rankTelegramSearchResults, runWatchedSearch, shouldSuppressAlert } = await import(`../src/server.js?db=${cacheKey}`);
   const { closeDatabase, createAlert } = await import("../src/store.js");
   const { notifyAlert, formatAlertMessage } = await import("../src/notifier.js");
   await new Promise((resolve, reject) => {
@@ -27,10 +27,12 @@ test("serves core and roadmap API endpoints", async () => {
     const pricedListings = await getJson(`${base}/api/listings?include_filtered=true&min_price=900&max_price=1200`);
     const recentListings = await getJson(`${base}/api/listings?include_filtered=true&max_age_hours=24`);
     const search = await post(`${base}/api/search`, { query: "MacBook", mode: "local" });
-    const label = await post(`${base}/api/feedback/label`, { listing_id: 1, rating: "good", asked_price: 1180 });
+    const label = await post(`${base}/api/feedback/label`, { listing_id: 1, rating: "good", asked_price: 1180, search_query: "macbook type:component" });
     const spamLabel = await post(`${base}/api/feedback/label`, { listing_id: 4, rating: "spam", asked_price: 999 });
     const badDealLabel = await post(`${base}/api/feedback/label`, { listing_id: 2, rating: "bad_deal", asked_price: 980 });
     const model = await getJson(`${base}/api/training/model`);
+    const benchmark = await getJson(`${base}/api/training/benchmark`);
+    const excludedSearch = await getJson(`${base}/api/listings?q=${encodeURIComponent("macbook -case type:component")}&include_filtered=true`);
     const priceHistory = await getJson(`${base}/api/listings/1/price-history`);
     const reputation = await getJson(`${base}/api/sellers/seller-100/reputation`);
     const watch = await post(`${base}/api/watchlist`, { query: "lian li", price_ceiling: 120, category: "pc parts", active: true });
@@ -116,6 +118,12 @@ test("serves core and roadmap API endpoints", async () => {
     assert.ok(model.example_count >= 3);
     assert.ok(model.bad_deal_count >= 1);
     assert.ok(model.seller_stats);
+    assert.ok(model.model_weights);
+    assert.equal(typeof model.alert_feedback.min_preference, "number");
+    assert.ok(benchmark.sample_size >= 3);
+    assert.ok(benchmark.query_sample_size >= 1);
+    assert.equal(excludedSearch.every((listing) => !/\bcase\b/i.test(listing.title)), true);
+    assert.equal(evaluateLearnedAlertGate({ training: { preference_score: 5 }, relevance_score: 80 }, { alert_feedback: { min_preference: 40 } }).allowed, false);
     assert.equal(Array.isArray(priceHistory), true);
     assert.equal(reputation.seller_id, "seller-100");
     assert.equal(watch.query, "lian li");

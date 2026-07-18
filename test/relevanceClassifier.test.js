@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { analyzeListingRelevance, inferPreciseCategory, labelTrainingEffect, normalizeRefinedRating } from "../src/relevanceClassifier.js";
+import { analyzeListingRelevance, analyzeQueryMatch, extractModelFamilies, inferPreciseCategory, labelTrainingEffect, normalizeRefinedRating, parseSearchQuery, querySearchTokens } from "../src/relevanceClassifier.js";
 
 test("classifies Lian Li Dan A3 as pc case before graphics card", () => {
   assert.equal(inferPreciseCategory({ title: "Lian Li Dan A3 mATX Case Black with Wood Panel" }), "pc case");
@@ -35,6 +35,44 @@ test("marks retro laptop collectibles as lower relevance", () => {
   assert.ok(relevance.flags.includes("collectible_or_display_item"));
   assert.ok(relevance.flags.includes("faulty_or_for_parts"));
   assert.ok(relevance.score < 50);
+});
+
+test("matches reordered model tokens and compact model numbers", () => {
+  const reordered = analyzeQueryMatch({ title: "ASUS GeForce RTX 3070 Dual OC 8GB" }, "3070 rtx");
+  const compact = analyzeQueryMatch({ title: "MSI RTX3070 Ventus graphics card" }, "rtx 3070");
+  assert.ok(reordered.score >= 90);
+  assert.ok(compact.score >= 80);
+  assert.deepEqual(querySearchTokens("the RTX-3070 for sale"), ["rtx", "3070"]);
+});
+
+test("penalizes wrong categories, accessories, and description-only weak matches", () => {
+  const gpu = analyzeQueryMatch({ title: "NVIDIA RTX 3070 Founders Edition", category: "graphics card" }, "rtx 3070");
+  const riser = analyzeQueryMatch({ title: "Vertical GPU riser kit for RTX 3070", category: "pc case accessory" }, "rtx 3070");
+  const caseListing = analyzeQueryMatch({ title: "Lian Li PC case", description: "Fits RTX 3070", category: "pc case" }, "rtx 3070");
+  assert.ok(gpu.score > riser.score);
+  assert.ok(gpu.score > caseListing.score);
+  assert.ok(riser.flags.includes("query_category_mismatch") || riser.flags.includes("unwanted_accessory"));
+});
+
+test("parses exclusions, category directives, and search intent", () => {
+  const parsed = parseSearchQuery('rtx 3070 -riser -"vertical kit" type:component category:gpu');
+  assert.equal(parsed.search_text, "rtx 3070");
+  assert.deepEqual(parsed.exclusions, ["riser", "vertical", "kit"]);
+  assert.equal(parsed.intent, "component");
+  assert.equal(parsed.category, "graphics card");
+});
+
+test("exclusions and intent remove otherwise strong false positives", () => {
+  const fullGpu = analyzeQueryMatch({ title: "RTX 3070 graphics card", category: "graphics card" }, "rtx 3070 -riser type:component");
+  const riser = analyzeQueryMatch({ title: "RTX 3070 vertical riser kit", category: "pc case accessory" }, "rtx 3070 -riser type:component");
+  assert.ok(fullGpu.score >= 80);
+  assert.equal(riser.score, 0);
+  assert.ok(riser.flags.includes("excluded_term_match"));
+});
+
+test("extracts product model families separately from generic tokens", () => {
+  assert.deepEqual(extractModelFamilies({ title: "ASUS RTX 4070 Ti Super 16GB" }), ["rtx 4070 ti super"]);
+  assert.deepEqual(extractModelFamilies({ title: "AMD Ryzen 7 7800X3D CPU" }), ["ryzen 7 7800x3d"]);
 });
 
 test("normalizes legacy feedback labels", () => {

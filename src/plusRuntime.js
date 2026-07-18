@@ -5,10 +5,10 @@ import { applyRollingCategoryMedians } from "./categoryMedianAutoTune.js";
 import { applyScopedDuplicateInfo } from "./duplicateGroups.js";
 import { scoreDeal } from "./filterEngine.js";
 import { hydrateCarousellListings } from "./plusHydration.js";
-import { getAlerts, getPriceHistory, getState, readJson, writeJson } from "./store.js";
-import { markAllAlertsRead } from "./storeReliability.js";
+import { bulkUpsertListings, getAlerts, getPriceHistory, getState, markAlertsRead, readJson } from "./store.js";
 import { enrichListingData, flattenListingForExport, parseStartUrls, searchBodyFromStartUrls, toCsv } from "./listingDataQuality.js";
 import { REFINED_RATINGS, saveRefinedListingLabel } from "./refinedFeedback.js";
+import { parseSearchQuery } from "./relevanceClassifier.js";
 import { searchAndStoreStartUrls } from "./startUrlSearch.js";
 import {
   addDuplicateOverride,
@@ -49,6 +49,8 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
   const scopedListingsCache = new Map();
   const cacheMax = Math.max(5, Number(process.env.LISTINGS_CACHE_MAX || 40));
   const perfLogEnabled = /^(1|true|yes)$/i.test(String(process.env.PERF_LOG || ""));
+  const hydrationBatchSize = clampInteger(process.env.HYDRATION_BATCH_SIZE, 8, 2, 20);
+  const hydrationConcurrency = clampInteger(process.env.HYDRATION_CONCURRENCY, 3, 1, 4);
 
   server.removeAllListeners("request");
   server.on("request", async (request, response) => {
@@ -147,7 +149,7 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
       }
 
       if (request.method === "POST" && url.pathname === "/api/alerts/mark-read") {
-        sendJson(response, 200, await markAllAlertsRead());
+        sendJson(response, 200, markAlertsRead());
         return;
       }
 
@@ -202,11 +204,12 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
         }
         const nextBody = searchBodyFromStartUrls(body);
         const query = String(nextBody.query || body.query || "").trim();
-        if (!query && !nextBody.startUrls?.length) {
+        const parsedQuery = parseSearchQuery(query, { intent: nextBody.intent || body.intent });
+        if ((!query || !parsedQuery.search_text) && !nextBody.startUrls?.length) {
           sendJson(response, 400, { error: "query or parseable startUrls are required" });
           return;
         }
-        const search = await searchAndStoreStartUrls({ ...nextBody, query }, {
+        const search = await searchAndStoreStartUrls({ ...nextBody, query: parsedQuery.search_text || query }, {
           limit: "all",
           anchorLimit: nextBody.mode === "more" || body.mode === "more" ? 500 : 240,
           hydrateDetails: false
@@ -225,11 +228,13 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
           updated: search.updated,
           hydration_job: hydrationJob,
           warning: null,
+          parsed_query: parsedQuery,
           results: cachedScopedListings(state, resultQuery, {
             minPrice: nextBody.min_price ?? body.min_price ?? 1,
             maxPrice: nextBody.max_price ?? body.max_price,
             maxAgeHours: nextBody.max_age_hours ?? body.max_age_hours,
             location: nextBody.location ?? body.location,
+            intent: parsedQuery.intent,
             includeFiltered: Boolean(nextBody.include_filtered ?? body.include_filtered ?? true)
           }),
           history: state.searches || []
@@ -288,6 +293,7 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
     if (!listing) return { answer: "Listing not found" };
     const label = await saveRefinedListingLabel(listingId, refinedRating, {
       asked_price: listing.current_price,
+      search_query: getAlerts({ limit: 500 }).find((alert) => Number(alert.listing_id) === listingId)?.search_query || "",
       notes: `Telegram training: ${refinedRating}`
     });
     clearScopedListingsCache();
@@ -298,8 +304,21 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
     const candidates = (Array.isArray(listings) ? listings : []).filter((listing) => listing?.carousell_url);
     if (!candidates.length) return null;
     const id = `plus-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const job = { id, query, status: "queued", total: candidates.length, completed: 0, started_at: new Date().toISOString(), completed_at: null, error: null };
+    const job = {
+      id,
+      query,
+      status: "queued",
+      total: candidates.length,
+      completed: 0,
+      enriched: 0,
+      failed: 0,
+      started_at: new Date().toISOString(),
+      last_progress_at: null,
+      completed_at: null,
+      error: null
+    };
     plusSearchJobs.set(id, job);
+    pruneHydrationJobs(plusSearchJobs);
     hydratePlusListings(id, candidates).catch((error) => {
       const current = plusSearchJobs.get(id) || job;
       plusSearchJobs.set(id, { ...current, status: "failed", error: error.message, completed_at: new Date().toISOString() });
@@ -311,29 +330,53 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
     const job = plusSearchJobs.get(jobId);
     if (!job) return;
     plusSearchJobs.set(jobId, { ...job, status: "running" });
-    const batchSize = 3;
-    for (let index = 0; index < listings.length; index += batchSize) {
+    let failed = 0;
+    let enriched = 0;
+    for (let index = 0; index < listings.length; index += hydrationBatchSize) {
       const current = plusSearchJobs.get(jobId);
       if (!current || current.status === "failed") return;
-      const batch = listings.slice(index, index + batchSize);
-      const hydrated = await timed(`hydratePlusListings:${batch.length}`, () => hydrateCarousellListings(batch, { concurrency: 2, jitterMs: 400 }));
+      const batch = listings.slice(index, index + hydrationBatchSize);
+      const hydrated = await timed(`hydratePlusListings:${batch.length}`, () => hydrateCarousellListings(batch, {
+        concurrency: hydrationConcurrency,
+        jitterMs: 180,
+        maxAttempts: 2
+      }));
       await mergeHydratedListings(hydrated);
-      plusSearchJobs.set(jobId, { ...current, status: "running", completed: Math.min(listings.length, index + batch.length), total: listings.length });
+      failed += hydrated.filter((listing) => listing?.hydration_error_at).length;
+      enriched += hydrated.filter((listing) => !listing?.hydration_error_at).length;
+      plusSearchJobs.set(jobId, {
+        ...current,
+        status: "running",
+        completed: Math.min(listings.length, index + batch.length),
+        enriched,
+        failed,
+        total: listings.length,
+        last_progress_at: new Date().toISOString()
+      });
+      await yieldToEventLoop();
     }
     const current = plusSearchJobs.get(jobId) || job;
-    plusSearchJobs.set(jobId, { ...current, status: "complete", completed: listings.length, completed_at: new Date().toISOString() });
+    plusSearchJobs.set(jobId, {
+      ...current,
+      status: "complete",
+      completed: listings.length,
+      enriched,
+      failed,
+      error: failed ? `${failed} listing${failed === 1 ? "" : "s"} could not be enriched` : null,
+      completed_at: new Date().toISOString()
+    });
   }
 
   async function mergeHydratedListings(hydratedListings) {
     if (!hydratedListings?.length) return;
     const current = await readJson("listings");
     const byCarousellId = new Map(current.map((listing, index) => [listing.carousell_id, { listing, index }]));
-    let changed = false;
+    const changedListings = [];
     for (const hydrated of hydratedListings) {
       const enriched = enrichListingData(hydrated);
       const existing = byCarousellId.get(enriched.carousell_id);
       if (!existing) continue;
-      current[existing.index] = enrichListingData({
+      const merged = enrichListingData({
         ...existing.listing,
         ...enriched,
         id: existing.listing.id,
@@ -344,10 +387,11 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
         image_urls: preferHydratedImages(enriched.image_urls, existing.listing.image_urls),
         original_image_urls: preferHydratedImages(enriched.original_image_urls || enriched.image_urls, existing.listing.original_image_urls || existing.listing.image_urls)
       });
-      changed = true;
+      current[existing.index] = merged;
+      changedListings.push(merged);
     }
-    if (changed) {
-      await writeJson("listings", current);
+    if (changedListings.length) {
+      bulkUpsertListings(changedListings);
       clearScopedListingsCache();
     }
   }
@@ -406,6 +450,7 @@ export function installPlusRuntime({ server, originalHandler, buildListings, cor
       maxPrice: options.maxPrice ?? "",
       maxAgeHours: options.maxAgeHours ?? "",
       location: String(options.location || "").trim().toLowerCase(),
+      intent: String(options.intent || "any").trim().toLowerCase(),
       includeFiltered: Boolean(options.includeFiltered)
     });
   }
@@ -435,6 +480,24 @@ function searchDiagnosticsPayload(search = {}) {
     scrape_result: scrapeResult,
     scrape_results: Array.isArray(search.scrape_results) ? search.scrape_results : []
   };
+}
+
+function clampInteger(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(minimum, Math.min(maximum, Math.round(parsed)));
+}
+
+function pruneHydrationJobs(jobs, limit = 30) {
+  while (jobs.size > limit) {
+    const oldestId = jobs.keys().next().value;
+    if (!oldestId) return;
+    jobs.delete(oldestId);
+  }
+}
+
+function yieldToEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 async function findListingForTelegram(listingId) {
@@ -487,6 +550,7 @@ function filterOptions(url) {
     maxPrice: url.searchParams.get("max_price"),
     maxAgeHours: url.searchParams.get("max_age_hours"),
     location: url.searchParams.get("location"),
+    intent: url.searchParams.get("intent") || "any",
     includeFiltered: url.searchParams.get("include_filtered") === "true"
   };
 }

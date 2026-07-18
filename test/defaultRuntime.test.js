@@ -12,7 +12,10 @@ const carousellSearchSource = await readFile(new URL("../src/carousellSearch.js"
 const storeSource = await readFile(new URL("../src/store.js", import.meta.url), "utf8");
 const storeReliabilitySource = await readFile(new URL("../src/storeReliability.js", import.meta.url), "utf8");
 const notifierSource = await readFile(new URL("../src/notifier.js", import.meta.url), "utf8");
+const indexSource = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
+const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const refinedFeedbackSource = await readFile(new URL("../public/refined-feedback.js", import.meta.url), "utf8");
+const duplicateUiSource = await readFile(new URL("../public/duplicate-ui.js", import.meta.url), "utf8");
 const notificationCss = await readFile(new URL("../public/notification-detail.css", import.meta.url), "utf8");
 
 test("default npm runtime uses unified server", () => {
@@ -44,7 +47,9 @@ test("plus runtime installer has valid syntax", () => {
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(plusRuntimeSource, /installPlusRuntime/);
-  assert.match(plusRuntimeSource, /markAllAlertsRead/);
+  assert.match(plusRuntimeSource, /markAlertsRead/);
+  assert.match(plusRuntimeSource, /bulkUpsertListings\(changedListings\)/);
+  assert.doesNotMatch(plusRuntimeSource, /writeJson\("listings", current\)/);
   assert.match(plusRuntimeSource, /searchDiagnosticsPayload/);
 });
 
@@ -112,7 +117,7 @@ test("store core mark-read path updates all alerts directly", () => {
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(storeSource, /function markAlertsRead\(\)/);
   assert.match(storeSource, /readJsonFile\("alerts", \[\]\)/);
-  assert.match(storeSource, /SELECT id, payload FROM alerts WHERE read_at IS NULL/);
+  assert.match(storeSource, /json_set/);
   assert.doesNotMatch(storeSource, /getAlerts\(\{ limit: 500 \}\)\.map/);
 });
 
@@ -155,6 +160,20 @@ test("likes UI script has valid syntax", () => {
     encoding: "utf8"
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test("enhancement scripts are loaded exactly once", () => {
+  assert.equal((indexSource.match(/src="\/duplicate-ui\.js"/g) || []).length, 1);
+  assert.equal((indexSource.match(/src="\/likes-ui\.js"/g) || []).length, 1);
+  assert.doesNotMatch(refinedFeedbackSource, /createElement\("script"\)/);
+});
+
+test("hydration has one client controller and alert errors are deduplicated", () => {
+  assert.match(appSource, /async function pollSearchJob/);
+  assert.match(appSource, /alertsMarkReadPending/);
+  assert.match(appSource, /dataset\.dedupeKey/);
+  assert.doesNotMatch(duplicateUiSource, /async function pollSearchJob/);
+  assert.doesNotMatch(duplicateUiSource, /async function runSearch/);
 });
 
 test("UI guards placeholder prices and enables alert scrolling", () => {

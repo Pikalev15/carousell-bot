@@ -1,5 +1,4 @@
 const DUPLICATE_COLLAPSE_HIDE_LIMIT = 3;
-const HYDRATION_REFRESH_STEP = 3;
 const originalCardRenderer = typeof globalThis.card === "function" ? globalThis.card.bind(globalThis) : null;
 
 function collapseDuplicateGroups(listings) {
@@ -167,89 +166,6 @@ async function openDetails(listing) {
   document.getElementById("details-modal").showModal();
 }
 
-async function runSearch(mode) {
-  const input = document.getElementById("search-input");
-  const query = input.value.trim() || state.lastQuery;
-  if (!query) return;
-  const submit = mode === "more" ? document.getElementById("search-more") : document.querySelector("#search-form button[type='submit']");
-  setButtonBusy(submit, mode === "more" ? "Searching more" : "Searching");
-  state._hydrationRefreshStep = 0;
-  document.getElementById("search-summary").textContent = mode === "more" ? "Searching Carousell for more results..." : "Searching Carousell...";
-  try {
-    const payload = await api.post("/api/search", {
-      query,
-      mode,
-      min_price: getNumberValue("search-min-price", 1),
-      max_price: getNumberValue("search-max-price", null),
-      location: document.getElementById("search-location").value.trim(),
-      max_age_hours: getNumberValue("search-recent-filter", null),
-      include_filtered: true
-    });
-    state.lastQuery = query;
-    state.searchResults = payload.results;
-    state.searches = payload.history;
-    await load();
-    showView("search");
-    document.getElementById("search-input").value = query;
-    renderSearch();
-    const raw = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
-    const rendered = collapseDuplicateGroups(raw);
-    const source = payload.source === "carousell-web" ? "Carousell web" : payload.source;
-    const added = payload.added ? ` Added ${payload.added} new listings.` : "";
-    const updated = payload.updated ? ` Updated ${payload.updated} existing listings.` : "";
-    const warning = payload.warning ? ` ${payload.warning}` : "";
-    document.getElementById("search-summary").textContent = `${searchSummaryText(raw.length, rendered.length, query)} via ${source}.${added}${updated}${warning}`;
-    if (payload.hydration_job?.id) {
-      state.searchJob = payload.hydration_job;
-      pollSearchJob(payload.hydration_job.id, query);
-    }
-    showToast(payload.added || payload.updated ? `Added ${payload.added || 0}, updated ${payload.updated || 0}` : "Search complete");
-  } catch (error) {
-    document.getElementById("search-summary").textContent = `Search failed: ${error.message}`;
-    showToast(`Search failed: ${error.message}`, "error");
-  } finally {
-    resetButtonBusy(submit);
-  }
-}
-
-async function pollSearchJob(id, query) {
-  try {
-    const job = await api.get(`/api/search/jobs/${id}`);
-    state.searchJob = job;
-    const done = Number(job.completed || 0);
-    const total = Number(job.total || 0);
-    const refreshStep = Math.floor(done / HYDRATION_REFRESH_STEP);
-    if (refreshStep > Number(state._hydrationRefreshStep || 0)) {
-      state._hydrationRefreshStep = refreshStep;
-      await refreshHydratedSearchResults(query);
-    }
-    const raw = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
-    const rendered = collapseDuplicateGroups(raw);
-    if (job.status === "running" || job.status === "queued") {
-      document.getElementById("search-summary").textContent = `${searchSummaryText(raw.length, rendered.length, query)}. Enriching details ${done}/${total}...`;
-      setTimeout(() => pollSearchJob(id, query), 1200);
-      return;
-    }
-    if (job.status === "complete") {
-      await refreshHydratedSearchResults(query);
-      const nextRaw = sortListings(applyPriceFilters(state.searchResults, "search"), document.getElementById("search-sort").value);
-      const nextRendered = collapseDuplicateGroups(nextRaw);
-      document.getElementById("search-summary").textContent = `${searchSummaryText(nextRaw.length, nextRendered.length, query)}. Details enriched ${done}/${total}.`;
-      showToast("Listing details enriched");
-      return;
-    }
-    document.getElementById("search-summary").textContent = `${searchSummaryText(raw.length, rendered.length, query)}. Detail enrichment failed: ${job.error || "unknown error"}`;
-  } catch (error) {
-    showToast(`Hydration status failed: ${error.message}`, "error");
-  }
-}
-
-async function refreshHydratedSearchResults(query) {
-  await load();
-  state.searchResults = applyPriceFilters((state?.listings || []).filter((listing) => matchesQuery(listing, query)), "search");
-  renderSearch();
-}
-
 function priceHistoryChart(history = []) {
   const points = Array.isArray(history) ? history : [];
   if (points.length < 2) return `<p class="empty-state compact-empty">Not enough price history yet.</p>`;
@@ -344,5 +260,3 @@ globalThis.card = renderCardWithSimilar;
 globalThis.openDetails = openDetails;
 globalThis.renderListings = renderListings;
 globalThis.renderSearch = renderSearch;
-globalThis.runSearch = runSearch;
-globalThis.pollSearchJob = pollSearchJob;

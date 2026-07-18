@@ -39,7 +39,7 @@ test("trains with refined good, wtb, and accessory labels", () => {
     { listing_id: 3, user_rating: "accessory_only", relevance_flags: ["accessory_only"] }
   ]);
 
-  assert.equal(model.version, 2);
+  assert.equal(model.version, 3);
   assert.equal(model.example_count, 3);
   assert.equal(model.positive_count, 1);
   assert.equal(model.negative_count, 2);
@@ -49,6 +49,23 @@ test("trains with refined good, wtb, and accessory labels", () => {
   assert.equal(model.label_counts.wtb_service, 1);
   assert.ok(model.issue_weights.wtb_or_service < 0);
   assert.ok(model.issue_weights.accessory_only < 0);
+  assert.ok(model.model_weights["lian li"] === undefined || typeof model.model_weights["lian li"] === "number");
+  assert.equal(model.alert_feedback.total, 3);
+});
+
+test("learns model-family preferences separately from generic text", () => {
+  const model = trainModel([
+    { id: 10, title: "ASUS RTX 4070 Ti Super", category: "graphics card", seller_id: "a" },
+    { id: 11, title: "MSI RTX 4070 Ti Super", category: "graphics card", seller_id: "b" },
+    { id: 12, title: "RTX 3060 vertical riser", category: "pc case accessory", seller_id: "c" }
+  ], [
+    { listing_id: 10, refined_rating: "great_deal" },
+    { listing_id: 11, refined_rating: "good_deal" },
+    { listing_id: 12, refined_rating: "accessory_only" }
+  ]);
+  assert.ok(model.model_weights["rtx 4070 ti super"] > 0);
+  const prediction = predictPreference({ title: "Gigabyte RTX 4070 Ti Super", category: "graphics card", seller_id: "new" }, model);
+  assert.ok(prediction.reasons.some((reason) => reason.includes("model rtx 4070 ti super")));
 });
 
 test("refined model predicts low preference for learned bad relevance flags", () => {
