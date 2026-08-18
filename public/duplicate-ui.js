@@ -1,5 +1,11 @@
 const DUPLICATE_COLLAPSE_HIDE_LIMIT = 3;
+const LISTING_RENDER_BATCH = 48;
+const FILTER_RENDER_DEBOUNCE_MS = 120;
 const originalCardRenderer = typeof globalThis.card === "function" ? globalThis.card.bind(globalThis) : null;
+let listingRenderLimit = LISTING_RENDER_BATCH;
+let searchRenderLimit = LISTING_RENDER_BATCH;
+const deferredViewRenders = new Set();
+const renderTimers = new Map();
 
 function collapseDuplicateGroups(listings) {
   const groups = new Map();
@@ -85,7 +91,16 @@ function removeEmptyVisual(html) {
   return String(html || "").replace(/\s*<div class="listing-visual empty">[\s\S]*?<\/div>\s*/, "\n");
 }
 
+function viewIsActive(view) {
+  return Boolean(document.getElementById(view)?.classList.contains("active"));
+}
+
 function renderListings() {
+  if (!viewIsActive("listings")) {
+    deferredViewRenders.add("listings");
+    return;
+  }
+  deferredViewRenders.delete("listings");
   const filter = document.getElementById("listing-filter").value;
   const raw = applyPriceFilters(state?.listings || [], "listing").filter((listing) => {
     if (filter === "clean") return !listing.classification.is_filtered;
@@ -93,19 +108,26 @@ function renderListings() {
     return true;
   });
   const rendered = collapseDuplicateGroups(sortListings(raw, document.getElementById("listing-sort").value));
+  const visible = rendered.slice(0, listingRenderLimit);
   document.getElementById("listing-list").innerHTML = rendered.length
-    ? rendered.map(renderCardWithSimilar).join("")
+    ? `${visible.map(renderCardWithSimilar).join("")}${renderMoreControl("listings", visible.length, rendered.length)}`
     : `<p class="empty-state">No listings match the current filters.</p>`;
 }
 
 function renderSearch() {
+  if (!viewIsActive("search")) {
+    deferredViewRenders.add("search");
+    return;
+  }
+  deferredViewRenders.delete("search");
   const raw = sortListings(applyPriceFilters(state?.searchResults || [], "search"), document.getElementById("search-sort").value);
   const rendered = collapseDuplicateGroups(raw);
+  const visible = rendered.slice(0, searchRenderLimit);
   document.getElementById("search-results").innerHTML = rendered.length
-    ? rendered.map(renderCardWithSimilar).join("")
+    ? `${visible.map(renderCardWithSimilar).join("")}${renderMoreControl("search", visible.length, rendered.length)}`
     : `<p class="empty-state">No visible listings in this price range. Try raising the max, lowering the min, or searching a more specific phrase.</p>`;
   if (state?.lastQuery) {
-    document.getElementById("search-summary").textContent = searchSummaryText(raw.length, rendered.length, state.lastQuery);
+    document.getElementById("search-summary").textContent = searchSummaryText(raw.length, rendered.length, state.lastQuery, visible.length);
   }
   document.getElementById("search-history").innerHTML = state?.searches?.length
     ? state.searches
@@ -122,6 +144,105 @@ function renderSearch() {
         )
         .join("")
     : `<p class="meta">No searches yet.</p>`;
+}
+
+function renderMoreControl(scope, shown, total) {
+  if (shown >= total) return "";
+  return `
+    <div class="render-more-row">
+      <span class="meta">Showing ${shown} of ${total}</span>
+      <button type="button" data-render-more="${scope}">Show ${Math.min(LISTING_RENDER_BATCH, total - shown)} more</button>
+    </div>
+  `;
+}
+
+function scheduleViewRender(view, delay = FILTER_RENDER_DEBOUNCE_MS) {
+  clearTimeout(renderTimers.get(view));
+  renderTimers.set(view, setTimeout(() => {
+    renderTimers.delete(view);
+    if (view === "listings") renderListings();
+    if (view === "search") renderSearch();
+  }, delay));
+}
+
+function installFilterRenderGuards() {
+  const bindings = [
+    ["listing-min-price", "input", "listings"],
+    ["listing-max-price", "input", "listings"],
+    ["listing-location", "input", "listings"],
+    ["listing-recent-filter", "change", "listings"],
+    ["listing-sort", "change", "listings"],
+    ["listing-filter", "change", "listings"],
+    ["search-min-price", "input", "search"],
+    ["search-max-price", "input", "search"],
+    ["search-location", "input", "search"],
+    ["search-recent-filter", "change", "search"],
+    ["search-sort", "change", "search"]
+  ];
+  for (const [id, eventName, view] of bindings) {
+    const element = document.getElementById(id);
+    if (!element) continue;
+    element.addEventListener(eventName, (event) => {
+      event.stopImmediatePropagation();
+      if (view === "listings") listingRenderLimit = LISTING_RENDER_BATCH;
+      if (view === "search") searchRenderLimit = LISTING_RENDER_BATCH;
+      scheduleViewRender(view, eventName === "input" ? FILTER_RENDER_DEBOUNCE_MS : 0);
+    }, true);
+  }
+}
+
+function installDeferredViewRenderers() {
+  const mappings = {
+    settings: ["renderFilters", "renderTraining", "renderSellers", "renderTelegram", "renderDigestEmail", "renderBackupPanel"],
+    watchlist: ["renderWatchlist", "renderPriceTargets"],
+    activity: ["renderActivity"],
+    search: ["renderSearchDiagnostics"]
+  };
+
+  for (const [view, names] of Object.entries(mappings)) {
+    for (const name of names) {
+      const original = typeof globalThis[name] === "function" ? globalThis[name].bind(globalThis) : null;
+      if (!original) continue;
+      globalThis[name] = (...args) => {
+        if (!viewIsActive(view)) {
+          deferredViewRenders.add(view);
+          return undefined;
+        }
+        deferredViewRenders.delete(view);
+        return original(...args);
+      };
+    }
+  }
+
+  document.querySelectorAll(".nav-button").forEach((button) => {
+    button.addEventListener("click", () => {
+      const view = button.dataset.view;
+      requestAnimationFrame(() => renderDeferredView(view));
+    });
+  });
+}
+
+function renderDeferredView(view) {
+  if (!viewIsActive(view)) return;
+  if (view === "listings") renderListings();
+  if (view === "search") {
+    renderSearch();
+    globalThis.renderSearchDiagnostics?.();
+  }
+  if (view === "settings") {
+    globalThis.renderFilters?.();
+    globalThis.renderTraining?.();
+    globalThis.renderSellers?.();
+    globalThis.renderTelegram?.();
+    globalThis.renderDigestEmail?.();
+    globalThis.renderBackupPanel?.();
+  }
+  if (view === "watchlist") {
+    globalThis.renderWatchlist?.();
+    globalThis.renderPriceTargets?.();
+  }
+  if (view === "activity") globalThis.renderActivity?.();
+  deferredViewRenders.delete(view);
 }
 
 async function openDetails(listing) {
@@ -212,6 +333,16 @@ function injectImportExportControls() {
 document.addEventListener("click", async (event) => {
   const button = event.target.closest("button");
   if (!button) return;
+  if (button.dataset.renderMore) {
+    if (button.dataset.renderMore === "listings") {
+      listingRenderLimit += LISTING_RENDER_BATCH;
+      renderListings();
+    } else if (button.dataset.renderMore === "search") {
+      searchRenderLimit += LISTING_RENDER_BATCH;
+      renderSearch();
+    }
+    return;
+  }
   if (button.dataset.unlinkDuplicate) {
     await api.post(`/api/listings/${button.dataset.unlinkDuplicate}/unlink-duplicate`, { other_listing_id: Number(button.dataset.otherListingId) });
     await load();
@@ -246,13 +377,23 @@ document.addEventListener("change", async (event) => {
   }
 });
 
+document.getElementById("search-form")?.addEventListener("submit", () => {
+  searchRenderLimit = LISTING_RENDER_BATCH;
+}, true);
+document.getElementById("search-more")?.addEventListener("click", () => {
+  searchRenderLimit = LISTING_RENDER_BATCH;
+}, true);
+
 document.addEventListener("DOMContentLoaded", injectImportExportControls);
 injectImportExportControls();
+installFilterRenderGuards();
+installDeferredViewRenderers();
 
-function searchSummaryText(rawCount, renderedCount, query) {
+function searchSummaryText(rawCount, renderedCount, query, shownCount = renderedCount) {
   const hidden = Math.max(0, Number(rawCount || 0) - Number(renderedCount || 0));
-  if (hidden > 0) return `Found ${renderedCount} shown results for "${query}" (${rawCount} total, ${hidden} grouped as similar)`;
-  return `Found ${renderedCount} visible results for "${query}"`;
+  const batching = shownCount < renderedCount ? ` Showing ${shownCount} now.` : "";
+  if (hidden > 0) return `Found ${renderedCount} shown results for "${query}" (${rawCount} total, ${hidden} grouped as similar).${batching}`;
+  return `Found ${renderedCount} visible results for "${query}".${batching}`;
 }
 
 globalThis.collapseDuplicateGroups = collapseDuplicateGroups;
